@@ -1,0 +1,227 @@
+{
+    "info": {
+        "name": "Affiliator Pro API",
+        "description": "API collection for Affiliator Pro - Image and Video Generation",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "auth": {
+        "type": "bearer",
+        "bearer": [
+            {
+                "key": "token",
+                "value": "{{api_token}}",
+                "type": "string"
+            }
+        ]
+    },
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "https://www.affiliator.pro",
+            "type": "string"
+        },
+        {
+            "key": "api_token",
+            "value": "YOUR_API_TOKEN_HERE",
+            "type": "string"
+        }
+    ],
+    "item": [
+        {
+            "name": "Image Generation",
+            "item": [
+                {
+                    "name": "Generate Image (Text to Image)",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "prompt",
+                                    "value": "A beautiful sunset over mountains with vibrant colors",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "aspectRatio",
+                                    "value": "landscape",
+                                    "description": "Options: landscape, portrait",
+                                    "type": "text"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/generate/image",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "generate",
+                                "image"
+                            ]
+                        },
+                        "description": "Generate images from text prompts using Nano Banana Pro model"
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Generate Image (Image to Image)",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "prompt",
+                                    "value": "Transform this into an oil painting style",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "aspectRatio",
+                                    "value": "landscape",
+                                    "description": "Options: landscape, portrait",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "referenceImages",
+                                    "type": "file",
+                                    "description": "Reference image file (up to 3 images)"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/generate/image",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "generate",
+                                "image"
+                            ]
+                        },
+                        "description": "Generate images using reference images for style guidance"
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Video Generation",
+            "item": [
+                {
+                    "name": "Generate Video (Text to Video)",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "prompt",
+                                    "value": "A drone flying over a beautiful forest with cinematic camera movement",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "aspectRatio",
+                                    "value": "landscape",
+                                    "description": "Options: landscape, portrait",
+                                    "type": "text"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/generate/video",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "generate",
+                                "video"
+                            ]
+                        },
+                        "description": "Generate videos from text prompts using Veo 3.1 model. Returns a jobId for polling."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Generate Video (Image to Video)",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "formdata",
+                            "formdata": [
+                                {
+                                    "key": "prompt",
+                                    "value": "Animate this image with gentle camera zoom and natural movement",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "aspectRatio",
+                                    "value": "landscape",
+                                    "description": "Options: landscape, portrait",
+                                    "type": "text"
+                                },
+                                {
+                                    "key": "startImage",
+                                    "type": "file",
+                                    "description": "Starting image for video generation"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/api/generate/video",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "generate",
+                                "video"
+                            ]
+                        },
+                        "description": "Generate videos from a starting image using Veo 3.1 model"
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Job Status",
+            "item": [
+                {
+                    "name": "Check Job Status",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/api/jobs/:jobId",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "jobs",
+                                ":jobId"
+                            ],
+                            "variable": [
+                                {
+                                    "key": "jobId",
+                                    "value": "YOUR_JOB_ID_HERE",
+                                    "description": "The job ID returned from video generation"
+                                }
+                            ]
+                        },
+                        "description": "Check the status of an async generation job. Poll this endpoint until status is 'completed'."
+                    },
+                    "response": []
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,239 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AI Media Generation API",
+    "description": "API untuk generate video dan image menggunakan AI (Google Flow / Veo / Nano Banana Pro)",
+    "version": "1.0.0",
+    "contact": {
+      "name": "API Support"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api",
+      "description": "Local API Server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Video",
+      "description": "Text-to-Video Generation API"
+    },
+    {
+      "name": "Image",
+      "description": "Text-to-Image Generation API"
+    }
+  ],
+  "paths": {
+    "/video": {
+      "post": {
+        "tags": [
+          "Video"
+        ],
+        "summary": "Generate Video dari Text",
+        "description": "Generate video AI menggunakan model veo-3.1-fast-relaxed. Mendukung simple prompt atau structured prompt untuk hasil optimal.",
+        "operationId": "generateVideo",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoGenerateRequest"
+              },
+              "examples": {
+                "simple": {
+                  "summary": "Simple Prompt",
+                  "value": {
+                    "prompt": "A beautiful sunset over the ocean with waves crashing on the beach",
+                    "aspectRatio": "landscape",
+                    "count": 1
+                  }
+                },
+                "structured": {
+                  "summary": "Structured Prompt (Optimized)",
+                  "value": {
+                    "prompt": {
+                      "description": "A cinematic shot of a futuristic city at sunset, neon lights reflecting on wet streets",
+                      "style": {
+                        "visual": "cinematic, ultra realistic, high detail",
+                        "lighting": "golden hour, soft volumetric light",
+                        "color": "vibrant neon accents with warm orange sky",
+                        "camera": "slow cinematic dolly forward, shallow depth of field"
+                      },
+                      "subject": {
+                        "main": "futuristic cyberpunk city",
+                        "details": [
+                          "towering skyscrapers",
+                          "hovering vehicles",
+                          "crowded streets"
+                        ]
+                      },
+                      "environment": {
+                        "location": "urban metropolis",
+                        "time": "sunset",
+                        "weather": "light rain, misty atmosphere"
+                      },
+                      "motion": {
+                        "scene_motion": "slow and smooth",
+                        "object_motion": "vehicles moving naturally",
+                        "camera_motion": "cinematic tracking shot"
+                      },
+                      "mood": "epic, immersive, futuristic",
+                      "quality": {
+                        "sharpness": "high",
+                        "detail": "ultra",
+                        "noise": "low"
+                      }
+                    },
+                    "negative_prompt": [
+                      "low quality",
+                      "blurry",
+                      "pixelated",
+                      "glitch artifacts"
+                    ],
+                    "aspectRatio": "landscape",
+                    "count": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Video berhasil di-generate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoGenerateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request tidak valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Terlalu banyak request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/image": {
+      "post": {
+        "tags": [
+          "Image"
+        ],
+        "summary": "Generate Image dari Text",
+        "description": "Generate image AI menggunakan model nano-banana-pro (Gemini 3 Pro Image)",
+        "operationId": "generateImage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageGenerateRequest"
+              },
+              "examples": {
+                "simple": {
+                  "summary": "Simple Image Generation",
+                  "value": {
+                    "prompt": "A serene mountain landscape at sunset with vibrant colors, professional photography",
+                    "aspectRatio": "landscape",
+                    "count": 4
+                  }
+                },
+                "with_seed": {
+                  "summary": "With Seed (Reproducible)",
+                  "value": {
+                    "prompt": "A cute cat wearing a tiny hat, studio lighting, 4k photo",
+                    "aspectRatio": "portrait",
+                    "count": 2,
+                    "seed": 123456
+                  }
+                },
+                "with_references": {
+                  "summary": "With Reference Images",
+                  "value": {
+                    "prompt": "Transform this image into anime style",
+                    "aspectRatio": "landscape",
+                    "count": 4,
+                    "referenceImages": [
+                      "data:image/jpeg;base64,..."
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Image berhasil di-generate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageGenerateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request tidak valid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Terlalu banyak request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

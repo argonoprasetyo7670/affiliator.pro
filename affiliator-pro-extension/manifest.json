@@ -1,0 +1,73 @@
+{
+  "manifest_version": 3,
+  "name": "Affiliator Pro Client",
+  "version": "2.1.0",
+  "description": "Affiliator Pro - Extension untuk koneksi otomatis",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://labs.google/*",
+    "https://aisandbox-pa.googleapis.com/*",
+    "file:///*",
+    "http://localhost:*/*",
+    "http://127.0.0.1:*/*",
+    "https://*.affiliator.pro/*",
+    "https://*.run.app/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://labs.google/*"
+      ],
+      "js": [
+        "token-capture.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "file:///*",
+        "http://localhost:*/*",
+        "http://127.0.0.1:*/*",
+        "https://*.affiliator.pro/*",
+        "https://*.run.app/*"
+      ],
+      "js": [
+        "content-bridge.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:*/*",
+      "http://127.0.0.1:*/*",
+      "https://*.affiliator.pro/*",
+      "https://*.run.app/*"
+    ]
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon.png",
+      "32": "icon.png",
+      "48": "icon.png",
+      "128": "icon.png"
+    }
+  },
+  "icons": {
+    "16": "icon.png",
+    "32": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  }
+}
