@@ -3,6 +3,7 @@
 import { auth } from "@/lib/auth"
 import { checkSufficientCredits, deductCredits, checkSufficientCreditsByUserId, deductCreditsByUserId } from "./credit"
 import { CREDIT_COSTS, type CreditOperationType } from "@/lib/credit-packages"
+import { getCaptchaToken } from '@/lib/chaptcha'
 
 interface TextToVideoRequest {
     prompt: string
@@ -598,6 +599,9 @@ export async function generateFrameToFrameVideo(
         // Upload end image
         const endMediaGenerationId = await uploadImage(request.endImageBase64, "end image")
 
+        // 🔐 Inject captcha token from custom server
+        const captchaToken = await getCaptchaToken();
+
         // Generate video with both startImage and endImage (I2V-FL mode)
         const response = await fetch(`${USEAPI_BASE_URL}/videos`, {
             method: "POST",
@@ -613,6 +617,7 @@ export async function generateFrameToFrameVideo(
                 async: true,
                 startImage: startMediaGenerationId,
                 endImage: endMediaGenerationId,
+                ...(captchaToken ? { captchaToken } : {}),
             }),
         })
 

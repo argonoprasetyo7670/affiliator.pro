@@ -36,12 +36,12 @@ export type CreditPackageId = keyof typeof CREDIT_PACKAGES
  * Credit costs for each operation type
  */
 export const CREDIT_COSTS = {
-    textToImage: 0.1,
-    imageToImage: 0.1,
+    textToImage: 0.5,
+    imageToImage: 0.5,
     upscaleImage: 0.1,
     upscaleVideo: 0.5,
-    textToVideo: 1,
-    imageToVideo: 1,
+    textToVideo: 2,
+    imageToVideo: 2,
 } as const
 
 export type CreditOperationType = keyof typeof CREDIT_COSTS

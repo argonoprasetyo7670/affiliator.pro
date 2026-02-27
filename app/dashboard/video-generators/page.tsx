@@ -12,20 +12,32 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
     Send,
     Image as ImageIcon,
     X,
     Loader2,
     Download,
+    Sparkles,
     Play,
-    Shield,
+    Video,
+    Zap
 } from "lucide-react"
-import { submitTextToVideo, submitImageToVideo } from "@/app/actions/generate-video-captcha"
-import { generateImageToVideo, checkVideoJobStatus } from "@/app/actions/generate-video"
+import { generateTextToVideo, generateImageToVideo, checkVideoJobStatus, upscaleVideo } from "@/app/actions/generate-video"
 import { toast } from "sonner"
 
 type AspectRatio = "landscape" | "portrait"
-type VideoModel = "veo-3.1-quality" | "veo-3.1-fast" | "veo-3.1-fast-relaxed"
+
+interface UpscaledVersion {
+    resolution: "1080p" | "4K"
+    videoUrl: string
+    createdAt: Date
+}
 
 interface GeneratedVideo {
     id: string
@@ -35,6 +47,7 @@ interface GeneratedVideo {
     startImage: string | null
     createdAt: Date
     mediaGenerationId?: string
+    upscaledVersions?: UpscaledVersion[]
 }
 
 const aspectRatioOptions: { value: AspectRatio; label: string; icon: string }[] = [
@@ -42,21 +55,15 @@ const aspectRatioOptions: { value: AspectRatio; label: string; icon: string }[] 
     { value: "portrait", label: "Portrait (9:16)", icon: "📱" },
 ]
 
-const modelOptions: { value: VideoModel; label: string; description: string }[] = [
-    { value: "veo-3.1-fast-relaxed", label: "Fast Relaxed", description: "Tercepat, antri" },
-    { value: "veo-3.1-fast", label: "Fast", description: "Cepat, prioritas" },
-    { value: "veo-3.1-quality", label: "Quality", description: "Kualitas terbaik" },
-]
-
-export default function VideoCaptchaPage() {
+export default function VideoGeneratorPage() {
     const [prompt, setPrompt] = useState("")
     const [aspectRatio, setAspectRatio] = useState<AspectRatio>("landscape")
-    const [model, setModel] = useState<VideoModel>("veo-3.1-fast-relaxed")
     const [startImage, setStartImage] = useState<string | null>(null)
     const [isGenerating, setIsGenerating] = useState(false)
     const [generatedVideos, setGeneratedVideos] = useState<GeneratedVideo[]>([])
     const [previewVideo, setPreviewVideo] = useState<string | null>(null)
     const [previewAspectRatio, setPreviewAspectRatio] = useState<AspectRatio>("landscape")
+    const [upscalingVideoId, setUpscalingVideoId] = useState<string | null>(null)
     const fileInputRef = useRef<HTMLInputElement>(null)
     const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -65,47 +72,55 @@ export default function VideoCaptchaPage() {
         if (files && files[0]) {
             const file = files[0]
 
+            // Validate file type
             if (!file.type.startsWith('image/')) {
-                toast.error("Pilih file gambar")
+                toast.error("Please select an image file")
                 return
             }
 
+            // Validate file size (max 10MB)
             if (file.size > 10 * 1024 * 1024) {
-                toast.error("Ukuran gambar maksimal 10MB")
+                toast.error("Image size must be less than 10MB")
                 return
             }
 
             const reader = new FileReader()
             reader.onload = (event) => {
                 if (event.target?.result) {
-                    setStartImage(event.target.result as string)
-                    toast.success("Gambar start frame ditambahkan")
+                    const result = event.target.result as string
+                    setStartImage(result)
+                    toast.success("Start image added")
                 }
             }
-            reader.onerror = () => toast.error("Gagal membaca file gambar")
+            reader.onerror = () => {
+                toast.error("Failed to read image file")
+            }
             reader.readAsDataURL(file)
         }
 
-        if (fileInputRef.current) fileInputRef.current.value = ""
+        // Reset input to allow selecting the same file again
+        if (fileInputRef.current) {
+            fileInputRef.current.value = ""
+        }
     }
 
     const removeStartImage = () => {
         setStartImage(null)
     }
 
+    // Proxy external videos to bypass CORS
     const getProxiedVideoUrl = (url: string) => {
         return `/api/image-proxy?url=${encodeURIComponent(url)}`
     }
 
-
-    // Poll for job completion
+    // Poll for job completion - returns video URL and mediaGenerationId
     const pollJobStatus = async (
         jobId: string,
         operation: "textToVideo" | "imageToVideo",
         maxAttempts = 120
     ): Promise<{ videoUrl: string; mediaGenerationId?: string } | null> => {
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
-            await new Promise(resolve => setTimeout(resolve, 5000))
+            await new Promise(resolve => setTimeout(resolve, 5000)) // Wait 5 seconds
 
             const statusResult = await checkVideoJobStatus(jobId, operation)
 
@@ -120,11 +135,40 @@ export default function VideoCaptchaPage() {
                 throw new Error(statusResult.error || "Job failed")
             }
 
+            // Update progress toast
             if (attempt > 0 && attempt % 6 === 0) {
-                toast.info(`Masih memproses... (${Math.round((attempt * 5) / 60)} menit)`)
+                toast.info(`Still generating... (${Math.round((attempt * 5) / 60)} min elapsed)`)
             }
         }
         throw new Error("Job timed out")
+    }
+
+    // Poll for upscale job completion - uses upscaleVideo operation type for credit deduction
+    const pollUpscaleJobStatus = async (
+        jobId: string,
+        maxAttempts = 120
+    ): Promise<{ videoUrl: string } | null> => {
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 5000)) // Wait 5 seconds
+
+            const statusResult = await checkVideoJobStatus(jobId, "upscaleVideo")
+
+            if (statusResult.status === "completed" && statusResult.videoUrls?.length) {
+                return {
+                    videoUrl: statusResult.videoUrls[0],
+                }
+            }
+
+            if (statusResult.status === "failed") {
+                throw new Error(statusResult.error || "Upscale job failed")
+            }
+
+            // Update progress toast
+            if (attempt > 0 && attempt % 6 === 0) {
+                toast.info(`Still upscaling... (${Math.round((attempt * 5) / 60)} min elapsed)`)
+            }
+        }
+        throw new Error("Upscale job timed out")
     }
 
     const handleGenerate = async () => {
@@ -134,6 +178,7 @@ export default function VideoCaptchaPage() {
         const currentPrompt = prompt.trim()
         const currentStartImage = startImage
 
+        // Scroll to show loading indicator
         setTimeout(() => {
             messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
         }, 50)
@@ -142,8 +187,7 @@ export default function VideoCaptchaPage() {
             let result
 
             if (currentStartImage) {
-                // Image-to-video: use existing server action which handles upload
-                toast.info("Mengupload gambar & generating...")
+                // Image-to-video: use start image
                 const base64Image = currentStartImage.split(",")[1] || currentStartImage
                 result = await generateImageToVideo({
                     prompt: currentPrompt,
@@ -151,55 +195,57 @@ export default function VideoCaptchaPage() {
                     aspectRatio,
                 })
             } else {
-                // Text-to-video with captcha
-                result = await submitTextToVideo({
+                // Text-to-video
+                result = await generateTextToVideo({
                     prompt: currentPrompt,
-                    model,
                     aspectRatio,
                 })
             }
 
             if (!result.success) {
-                throw new Error("Generate gagal")
+                throw new Error(result.error || "Failed to generate video")
             }
 
-            // Poll for completion
-            if (result.jobId) {
-                const isCaptcha = !currentStartImage
-                toast.info(isCaptcha
-                    ? "🔐 Captcha token injected! Generating video... (1-3 menit)"
-                    : "🎬 Generating video... (1-3 menit)")
+            let videoUrl = result.videoUrl
+            let mediaGenerationId: string | undefined
+
+            // If we got a jobId, poll for completion
+            if (!videoUrl && result.jobId) {
+                toast.info("Generating video... This may take 1-3 minutes.")
                 const operation = currentStartImage ? "imageToVideo" : "textToVideo"
                 const pollResult = await pollJobStatus(result.jobId, operation)
-
-                if (pollResult?.videoUrl) {
-                    const newVideo: GeneratedVideo = {
-                        id: Date.now().toString(),
-                        prompt: currentPrompt,
-                        videoUrl: pollResult.videoUrl,
-                        aspectRatio,
-                        startImage: currentStartImage,
-                        createdAt: new Date(),
-                        mediaGenerationId: pollResult.mediaGenerationId,
-                    }
-
-                    setGeneratedVideos(prev => [...prev, newVideo])
-                    setPrompt("")
-                    setStartImage(null)
-                    toast.success("Video berhasil dibuat! 🎬")
-
-                    setTimeout(() => {
-                        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-                    }, 100)
-                } else {
-                    throw new Error("Tidak ada video URL")
+                if (pollResult) {
+                    videoUrl = pollResult.videoUrl
+                    mediaGenerationId = pollResult.mediaGenerationId
                 }
-            } else {
-                throw new Error("Tidak ada job ID dari server")
             }
+
+            if (!videoUrl) {
+                throw new Error("No video URL received")
+            }
+
+            const newVideo: GeneratedVideo = {
+                id: Date.now().toString(),
+                prompt: currentPrompt,
+                videoUrl,
+                aspectRatio,
+                startImage: currentStartImage,
+                createdAt: new Date(),
+                mediaGenerationId,
+            }
+
+            setGeneratedVideos(prev => [...prev, newVideo])
+            setPrompt("")
+            setStartImage(null)
+            toast.success("Video generated successfully!")
+
+            // Scroll to bottom
+            setTimeout(() => {
+                messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+            }, 100)
         } catch (error) {
             console.error("Generation failed:", error)
-            toast.error(error instanceof Error ? error.message : "Generate gagal")
+            toast.error(error instanceof Error ? error.message : "Failed to generate video")
         } finally {
             setIsGenerating(false)
         }
@@ -225,10 +271,75 @@ export default function VideoCaptchaPage() {
             a.click()
             document.body.removeChild(a)
             window.URL.revokeObjectURL(url)
-            toast.success("Video didownload!")
+            toast.success("Video downloaded!")
         } catch (error) {
-            console.error("Download failed:", error)
-            toast.error("Gagal mendownload video")
+            console.error("Failed to download video:", error)
+            toast.error("Failed to download video")
+        }
+    }
+
+    const handleUpscale = async (video: GeneratedVideo, resolution: "1080p" | "4K") => {
+        if (!video.mediaGenerationId) {
+            toast.error("Cannot upscale: missing media generation ID")
+            return
+        }
+
+        setUpscalingVideoId(video.id)
+        toast.info(`Starting upscale to ${resolution}... This may take a few minutes.`)
+
+        try {
+            const result = await upscaleVideo({
+                mediaGenerationId: video.mediaGenerationId,
+                resolution,
+            })
+
+            if (!result.success) {
+                throw new Error(result.error || "Upscale failed")
+            }
+
+            let upscaledVideoUrl: string | undefined
+
+            // If async job, poll for completion with correct operation type
+            if (result.jobId) {
+                // Use upscaleVideo operation type for credit deduction on completion
+                const pollResult = await pollUpscaleJobStatus(result.jobId, 120)
+                upscaledVideoUrl = pollResult?.videoUrl
+            } else if (result.videoUrl) {
+                upscaledVideoUrl = result.videoUrl
+            }
+
+            if (upscaledVideoUrl) {
+                // Add upscaled version to the original video
+                const upscaledVersion: UpscaledVersion = {
+                    resolution,
+                    videoUrl: upscaledVideoUrl,
+                    createdAt: new Date(),
+                }
+
+                // Update the original video with the new upscaled version
+                setGeneratedVideos(prev => prev.map(v =>
+                    v.id === video.id
+                        ? {
+                            ...v,
+                            upscaledVersions: [...(v.upscaledVersions || []), upscaledVersion]
+                        }
+                        : v
+                ))
+
+                toast.success(`Video upscaled to ${resolution}!`)
+
+                // Scroll to show the upscaled video
+                setTimeout(() => {
+                    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+                }, 100)
+            } else {
+                throw new Error("No upscaled video received")
+            }
+        } catch (error) {
+            console.error("Upscale failed:", error)
+            toast.error(error instanceof Error ? error.message : "Upscale failed")
+        } finally {
+            setUpscalingVideoId(null)
         }
     }
 
@@ -246,21 +357,16 @@ export default function VideoCaptchaPage() {
             <div className="flex-1 overflow-y-auto p-4 space-y-6">
                 {generatedVideos.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-center">
-                        <div className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-500/20 to-teal-500/20 flex items-center justify-center mb-4">
-                            <Shield className="w-10 h-10 text-emerald-500" />
+                        <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center mb-4">
+                            <Video className="w-10 h-10 text-blue-500" />
                         </div>
-                        <h2 className="text-2xl font-semibold mb-2">Video Generator + Captcha</h2>
+                        <h2 className="text-2xl font-semibold mb-2">AI Video Generator</h2>
                         <p className="text-muted-foreground max-w-md">
-                            Generate video dengan captcha token injection otomatis dari server custom Anda.
-                            Mendukung Text-to-Video dan Image-to-Video.
+                            Enter a prompt below to generate stunning videos. You can also add a start image for image-to-video generation.
                         </p>
-                        <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground">
-                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-full">
-                                <Shield className="w-3 h-3" />
-                                Captcha Protected
-                            </span>
-                            <span>⏱️ 1-3 menit per video</span>
-                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">
+                            ⏱️ Video generation takes 1-3 minutes
+                        </p>
                     </div>
                 ) : (
                     generatedVideos.map((video) => (
@@ -298,15 +404,16 @@ export default function VideoCaptchaPage() {
 
                                     {/* Info and actions */}
                                     <div className="p-3 space-y-3">
+                                        {/* Metadata */}
                                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                                             <span className="flex items-center gap-1.5">
-                                                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+                                                <span className="inline-block w-2 h-2 rounded-full bg-blue-500"></span>
                                                 {video.aspectRatio === "landscape" ? "🖼️ Landscape" : "📱 Portrait"}
-                                                <span className="text-emerald-500 ml-1">🔐 Captcha</span>
                                             </span>
                                             <span>{video.createdAt.toLocaleTimeString()}</span>
                                         </div>
 
+                                        {/* Action buttons */}
                                         <div className="flex flex-wrap gap-2">
                                             <Button
                                                 variant="outline"
@@ -324,12 +431,97 @@ export default function VideoCaptchaPage() {
                                                 variant="default"
                                                 size="sm"
                                                 className="flex-1 min-w-[80px]"
-                                                onClick={() => downloadVideo(video.videoUrl, `captcha-video-${video.id}.mp4`)}
+                                                onClick={() => downloadVideo(video.videoUrl, `generated-${video.id}.mp4`)}
                                             >
                                                 <Download className="w-4 h-4 mr-1" />
                                                 Download
                                             </Button>
+                                            {video.mediaGenerationId && (
+                                                <DropdownMenu>
+                                                    <DropdownMenuTrigger asChild>
+                                                        <Button
+                                                            variant="secondary"
+                                                            size="sm"
+                                                            className="flex-1 min-w-[80px]"
+                                                            disabled={upscalingVideoId === video.id}
+                                                        >
+                                                            {upscalingVideoId === video.id ? (
+                                                                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                                                            ) : (
+                                                                <Zap className="w-4 h-4 mr-1" />
+                                                            )}
+                                                            Upscale
+                                                        </Button>
+                                                    </DropdownMenuTrigger>
+                                                    <DropdownMenuContent align="end">
+                                                        <DropdownMenuItem
+                                                            onClick={() => handleUpscale(video, "1080p")}
+                                                            disabled={upscalingVideoId === video.id || video.upscaledVersions?.some(v => v.resolution === "1080p")}
+                                                        >
+                                                            <Zap className="w-4 h-4 mr-2" />
+                                                            <div className="flex flex-col">
+                                                                <span>1080p HD {video.upscaledVersions?.some(v => v.resolution === "1080p") ? "✓" : ""}</span>
+                                                                <span className="text-xs text-muted-foreground">0.5 credit</span>
+                                                            </div>
+                                                        </DropdownMenuItem>
+                                                        <DropdownMenuItem
+                                                            onClick={() => handleUpscale(video, "4K")}
+                                                            disabled={upscalingVideoId === video.id || video.upscaledVersions?.some(v => v.resolution === "4K")}
+                                                        >
+                                                            <Zap className="w-4 h-4 mr-2 text-amber-500" />
+                                                            <div className="flex flex-col">
+                                                                <span>4K Ultra HD {video.upscaledVersions?.some(v => v.resolution === "4K") ? "✓" : ""}</span>
+                                                                <span className="text-xs text-muted-foreground">0.5 credit</span>
+                                                            </div>
+                                                        </DropdownMenuItem>
+                                                    </DropdownMenuContent>
+                                                </DropdownMenu>
+                                            )}
                                         </div>
+
+                                        {/* Upscaled Versions - Side by Side */}
+                                        {video.upscaledVersions && video.upscaledVersions.length > 0 && (
+                                            <div className="mt-3 pt-3 border-t">
+                                                <p className="text-xs text-muted-foreground mb-2">Upscaled Versions:</p>
+                                                <div className="flex gap-2 flex-wrap">
+                                                    {video.upscaledVersions.map((upscaled) => (
+                                                        <div
+                                                            key={upscaled.resolution}
+                                                            className="flex-1 min-w-[120px] bg-muted/50 rounded-lg p-2"
+                                                        >
+                                                            <div className="flex items-center justify-between mb-2">
+                                                                <span className="text-xs font-medium text-green-600 dark:text-green-400">
+                                                                    ✓ {upscaled.resolution}
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex gap-1">
+                                                                <Button
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                    className="flex-1 h-7 text-xs"
+                                                                    onClick={() => {
+                                                                        setPreviewVideo(getProxiedVideoUrl(upscaled.videoUrl))
+                                                                        setPreviewAspectRatio(video.aspectRatio)
+                                                                    }}
+                                                                >
+                                                                    <Play className="w-3 h-3 mr-1" />
+                                                                    Play
+                                                                </Button>
+                                                                <Button
+                                                                    variant="default"
+                                                                    size="sm"
+                                                                    className="flex-1 h-7 text-xs"
+                                                                    onClick={() => downloadVideo(upscaled.videoUrl, `upscaled-${upscaled.resolution}-${video.id}.mp4`)}
+                                                                >
+                                                                    <Download className="w-3 h-3 mr-1" />
+                                                                    Save
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </Card>
                             </div>
@@ -341,10 +533,10 @@ export default function VideoCaptchaPage() {
                     <div className="flex justify-start">
                         <Card className="p-6">
                             <div className="flex items-center gap-3">
-                                <Loader2 className="w-5 h-5 animate-spin text-emerald-500" />
+                                <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
                                 <div>
-                                    <span className="text-sm text-muted-foreground">Generating video dengan captcha...</span>
-                                    <p className="text-xs text-muted-foreground mt-1">⏱️ Estimasi 1-3 menit</p>
+                                    <span className="text-sm text-muted-foreground">Generating your video...</span>
+                                    <p className="text-xs text-muted-foreground mt-1">This may take 1-3 minutes</p>
                                 </div>
                             </div>
                         </Card>
@@ -371,33 +563,17 @@ export default function VideoCaptchaPage() {
                             >
                                 <X className="w-3 h-3" />
                             </button>
-                            <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] bg-emerald-500 text-white px-1 rounded">
+                            <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] bg-blue-500 text-white px-1 rounded">
                                 Start
                             </span>
                         </div>
                     </div>
                 )}
 
+                {/* Stack layout for both mobile and desktop */}
                 <div className="flex flex-col gap-2">
-                    {/* Top row: Model + Aspect Ratio */}
+                    {/* Top row: Aspect Ratio */}
                     <div className="flex gap-2">
-                        <Select value={model} onValueChange={(v) => setModel(v as VideoModel)}>
-                            <SelectTrigger className="flex-1">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {modelOptions.map((option) => (
-                                    <SelectItem key={option.value} value={option.value}>
-                                        <span className="flex items-center gap-2">
-                                            <span>⚡</span>
-                                            <span>{option.label}</span>
-                                            <span className="text-xs text-muted-foreground">({option.description})</span>
-                                        </span>
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-
                         <Select value={aspectRatio} onValueChange={(v) => setAspectRatio(v as AspectRatio)}>
                             <SelectTrigger className="flex-1">
                                 <SelectValue />
@@ -417,6 +593,7 @@ export default function VideoCaptchaPage() {
 
                     {/* Main input row */}
                     <div className="flex gap-2 items-end">
+                        {/* Start Image Upload */}
                         <input
                             type="file"
                             ref={fileInputRef}
@@ -429,24 +606,26 @@ export default function VideoCaptchaPage() {
                             size="icon"
                             onClick={() => fileInputRef.current?.click()}
                             className="shrink-0 h-10 w-10"
-                            title="Tambah start image untuk I2V"
+                            title="Add start image for I2V"
                         >
                             <ImageIcon className="w-5 h-5" />
                         </Button>
 
+                        {/* Prompt Input */}
                         <Textarea
                             value={prompt}
                             onChange={(e) => setPrompt(e.target.value)}
                             onKeyDown={handleKeyDown}
-                            placeholder="Deskripsikan video yang ingin dibuat..."
+                            placeholder="Describe the video..."
                             className="min-h-[40px] max-h-[100px] resize-none flex-1 text-sm"
                             rows={1}
                         />
 
+                        {/* Generate Button */}
                         <Button
                             onClick={handleGenerate}
                             disabled={!prompt.trim() || isGenerating}
-                            className="shrink-0 h-10 w-10 bg-emerald-600 hover:bg-emerald-700"
+                            className="shrink-0 h-10 w-10"
                             size="icon"
                         >
                             {isGenerating ? (

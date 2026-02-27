@@ -2,6 +2,7 @@
 
 import { checkSufficientCredits, deductCredits, checkSufficientCreditsByUserId, deductCreditsByUserId } from "./credit"
 import { type CreditOperationType } from "@/lib/credit-packages"
+import { getImageCaptchaToken } from '@/lib/chaptcha'
 
 interface TextToImageRequest {
     prompt: string
@@ -61,6 +62,9 @@ export async function generateTextToImage(
             }
         }
 
+        // 🔐 Inject captcha token from custom server
+        const captchaToken = await getImageCaptchaToken();
+
         const response = await fetch(`${USEAPI_BASE_URL}/images`, {
             method: "POST",
             headers: {
@@ -72,6 +76,7 @@ export async function generateTextToImage(
                 aspectRatio: request.aspectRatio,
                 model: "nano-banana-pro",
                 count: 1,
+                ...(captchaToken ? { captchaToken } : {}),
             }),
         })
 
@@ -310,12 +315,16 @@ export async function generateImageToImage(
             mediaIds.push(mediaGenerationId)
         }
 
+        // 🔐 Inject captcha token from custom server
+        const captchaToken = await getImageCaptchaToken();
+
         // Build request body with reference images
         const requestBody: Record<string, unknown> = {
             prompt: request.prompt,
             aspectRatio: request.aspectRatio,
             model: "nano-banana-pro",
             count: 1,
+            ...(captchaToken ? { captchaToken } : {}),
         }
 
         // Add references (reference_1, reference_2, reference_3)
