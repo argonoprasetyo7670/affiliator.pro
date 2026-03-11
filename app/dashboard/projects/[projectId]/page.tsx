@@ -1132,7 +1132,6 @@ export default function ProjectDetailPage() {
               <Loader2 className="h-10 w-10 animate-spin text-red-500" />
               <div className="text-center">
                 <p className="font-medium">Menghapus asset...</p>
-                <p className="text-sm text-black/40 mt-1">Menghapus asset.</p>
               </div>
             </div>
           ) : (
