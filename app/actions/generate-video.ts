@@ -8,6 +8,7 @@ import { getCaptchaToken } from '@/lib/chaptcha'
 interface TextToVideoRequest {
     prompt: string
     aspectRatio: "landscape" | "portrait"
+    model?: string
     userId?: string  // Optional: for API key auth flow
 }
 
@@ -15,6 +16,7 @@ interface ImageToVideoRequest {
     prompt: string
     startImageBase64: string
     aspectRatio: "landscape" | "portrait"
+    model?: string
     userId?: string  // Optional: for API key auth flow
 }
 
@@ -23,7 +25,7 @@ interface FrameToFrameRequest {
     startImageBase64: string
     endImageBase64: string
     aspectRatio: "landscape" | "portrait"
-    model?: "veo-3.1-fast" | "veo-3.1-quality"
+    model?: string
     userId?: string  // Optional: for API key auth flow
 }
 
@@ -81,7 +83,7 @@ export async function generateTextToVideo(
             body: JSON.stringify({
                 prompt: request.prompt,
                 aspectRatio: request.aspectRatio,
-                model: "veo-3.1-fast",
+                model: "veo-3.1-fast-relaxed",
                 count: 1,
                 async: true,
             }),
@@ -259,37 +261,43 @@ export async function generateImageToVideo(
             }
         }
 
-        // Validate and decode base64 to binary
-        let base64Data = request.startImageBase64
-
-        // Remove data URL prefix if present
-        if (base64Data.includes(',')) {
-            base64Data = base64Data.split(',')[1]
-        }
-
-        // Validate base64 data
-        if (!base64Data || base64Data.length < 100) {
-            throw new Error("Invalid image data. Please try uploading a different image.")
-        }
-
         let binaryData: Buffer
-        try {
-            binaryData = Buffer.from(base64Data, "base64")
-        } catch (e) {
-            throw new Error("Failed to decode image data. Please try a different image.")
-        }
-
-        // Validate decoded buffer size
-        if (binaryData.length < 1000) {
-            throw new Error("Image data is too small. Please use a higher quality image.")
-        }
-
-        // Determine content type from base64 header or default to jpeg
         let contentType = "image/jpeg"
-        if (base64Data.startsWith("/9j/")) {
-            contentType = "image/jpeg"
-        } else if (base64Data.startsWith("iVBOR")) {
-            contentType = "image/png"
+
+        if (request.startImageBase64.startsWith("http://") || request.startImageBase64.startsWith("https://")) {
+            // It's a URL (e.g. Cloudinary) — fetch server-side
+            const fetched = await fetch(request.startImageBase64)
+            if (!fetched.ok) throw new Error("Failed to fetch start image from URL")
+            binaryData = Buffer.from(await fetched.arrayBuffer())
+            const ct = fetched.headers.get("content-type")
+            if (ct) contentType = ct.split(";")[0]
+        } else {
+            // Validate and decode base64 to binary
+            let base64Data = request.startImageBase64
+
+            // Remove data URL prefix if present
+            if (base64Data.includes(',')) {
+                base64Data = base64Data.split(',')[1]
+            }
+
+            // Validate base64 data
+            if (!base64Data || base64Data.length < 100) {
+                throw new Error("Invalid image data. Please try uploading a different image.")
+            }
+
+            try {
+                binaryData = Buffer.from(base64Data, "base64")
+            } catch (e) {
+                throw new Error("Failed to decode image data. Please try a different image.")
+            }
+
+            // Validate decoded buffer size
+            if (binaryData.length < 1000) {
+                throw new Error("Image data is too small. Please use a higher quality image.")
+            }
+
+            if (base64Data.startsWith("/9j/")) contentType = "image/jpeg"
+            else if (base64Data.startsWith("iVBOR")) contentType = "image/png"
         }
 
         console.log(`Uploading start image: ${binaryData.length} bytes, type: ${contentType}`)
@@ -333,7 +341,7 @@ export async function generateImageToVideo(
             body: JSON.stringify({
                 prompt: request.prompt,
                 aspectRatio: request.aspectRatio,
-                model: "veo-3.1-fast",
+                model: "veo-3.1-fast-relaxed",
                 count: 1,
                 async: true,
                 startImage: mediaGenerationId,
@@ -386,6 +394,191 @@ export async function generateImageToVideo(
         }
     } catch (error) {
         console.error("Image-to-video generation failed:", error)
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error occurred",
+        }
+    }
+}
+
+// R2V (Reference-to-Video) interfaces
+interface ReferenceToVideoRequest {
+    prompt: string
+    referenceImagesBase64: string[]  // 1-3 reference images (base64 or URL)
+    aspectRatio: "landscape" | "portrait"
+    model?: string
+    userId?: string
+}
+
+/**
+ * Generate video from reference images (R2V mode).
+ * Uploads 1-3 reference images, then generates video using them for style/composition.
+ * Only works with veo-3.1-fast and veo-3.1-fast-relaxed models.
+ */
+export async function generateReferenceToVideo(
+    request: ReferenceToVideoRequest
+): Promise<GenerateVideoResponse> {
+    try {
+        if (!USEAPI_TOKEN) {
+            throw new Error("USEAPI_API_TOKEN is not configured")
+        }
+
+        if (!request.referenceImagesBase64 || request.referenceImagesBase64.length === 0) {
+            throw new Error("At least one reference image is required")
+        }
+
+        if (request.referenceImagesBase64.length > 3) {
+            throw new Error("Maximum 3 reference images allowed")
+        }
+
+        // R2V only works with fast models
+        const model = request.model || "veo-3.1-fast"
+        if (model === "veo-3.1-quality") {
+            throw new Error("R2V mode only supports veo-3.1-fast and veo-3.1-fast-relaxed models")
+        }
+
+        // Check credits
+        const creditCheck = request.userId
+            ? await checkSufficientCreditsByUserId(request.userId, "imageToVideo")
+            : await checkSufficientCredits("imageToVideo")
+        if (!creditCheck.success) {
+            return { success: false, error: creditCheck.error }
+        }
+        if (!creditCheck.hasCredits) {
+            return {
+                success: false,
+                error: `Kredit tidak cukup. Dibutuhkan: ${creditCheck.required}, Tersedia: ${creditCheck.available}`
+            }
+        }
+
+        // Upload each reference image and collect mediaGenerationIds
+        const mediaGenerationIds: string[] = []
+
+        for (let i = 0; i < request.referenceImagesBase64.length; i++) {
+            const imageInput = request.referenceImagesBase64[i]
+
+            let binaryData: Buffer
+            let contentType = "image/jpeg"
+
+            if (imageInput.startsWith("http://") || imageInput.startsWith("https://")) {
+                const fetched = await fetch(imageInput)
+                if (!fetched.ok) throw new Error(`Failed to fetch reference image ${i + 1}`)
+                binaryData = Buffer.from(await fetched.arrayBuffer())
+                const ct = fetched.headers.get("content-type")
+                if (ct) contentType = ct.split(";")[0]
+            } else {
+                let base64Data = imageInput
+                if (base64Data.includes(',')) {
+                    base64Data = base64Data.split(',')[1]
+                }
+                if (!base64Data || base64Data.length < 100) {
+                    throw new Error(`Invalid reference image ${i + 1}`)
+                }
+                binaryData = Buffer.from(base64Data, "base64")
+                if (base64Data.startsWith("/9j/")) contentType = "image/jpeg"
+                else if (base64Data.startsWith("iVBOR")) contentType = "image/png"
+            }
+
+            console.log(`Uploading reference image ${i + 1}: ${binaryData.length} bytes, type: ${contentType}`)
+
+            const uploadResponse = await fetch(`${USEAPI_BASE_URL}/assets`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${USEAPI_TOKEN}`,
+                    "Content-Type": contentType,
+                },
+                body: new Uint8Array(binaryData),
+            })
+
+            if (!uploadResponse.ok) {
+                const errorData = await uploadResponse.json().catch(() => ({}))
+                console.error(`Upload Error (ref ${i + 1}):`, errorData)
+                const errorMsg = typeof errorData.error === 'object'
+                    ? errorData.error.message || JSON.stringify(errorData.error)
+                    : errorData.error || `Upload Error: ${uploadResponse.status}`
+                throw new Error(`Failed to upload reference image ${i + 1}: ${errorMsg}`)
+            }
+
+            const uploadData = await uploadResponse.json()
+            const mediaGenId = uploadData.mediaGenerationId?.mediaGenerationId || uploadData.mediaGenerationId
+
+            if (!mediaGenId) {
+                throw new Error(`Failed to upload reference image ${i + 1} - no media ID received`)
+            }
+
+            console.log(`Reference image ${i + 1} uploaded, mediaGenerationId:`, mediaGenId)
+            mediaGenerationIds.push(mediaGenId)
+        }
+
+        // Build request body with referenceImage_1, _2, _3
+        const requestBody: Record<string, unknown> = {
+            prompt: request.prompt,
+            aspectRatio: request.aspectRatio,
+            model,
+            count: 1,
+            async: true,
+        }
+
+        if (mediaGenerationIds[0]) requestBody.referenceImage_1 = mediaGenerationIds[0]
+        if (mediaGenerationIds[1]) requestBody.referenceImage_2 = mediaGenerationIds[1]
+        if (mediaGenerationIds[2]) requestBody.referenceImage_3 = mediaGenerationIds[2]
+
+        console.log(`[R2V] Generating with ${mediaGenerationIds.length} reference images`)
+
+        const response = await fetch(`${USEAPI_BASE_URL}/videos`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${USEAPI_TOKEN}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(requestBody),
+        })
+
+        const data = await response.json()
+
+        if (!response.ok) {
+            console.error("UseAPI R2V Error:", data)
+            throw new Error(data.error || `API Error: ${response.status}`)
+        }
+
+        const jobId = data.jobId || data.jobid
+        if (jobId) {
+            return {
+                success: true,
+                jobId,
+            }
+        }
+
+        // Sync response fallback
+        const videoUrls: string[] = []
+        if (data.media && Array.isArray(data.media)) {
+            for (const item of data.media) {
+                if (item.videoUrl) videoUrls.push(item.videoUrl)
+            }
+        }
+        if (data.operations && Array.isArray(data.operations)) {
+            for (const op of data.operations) {
+                const fifeUrl = op?.operation?.metadata?.video?.fifeUrl || op?.video?.fifeUrl
+                if (fifeUrl) videoUrls.push(fifeUrl)
+            }
+        }
+
+        if (videoUrls.length === 0) {
+            throw new Error("No video URL in response")
+        }
+
+        const deductResult = request.userId
+            ? await deductCreditsByUserId(request.userId, "imageToVideo", "Reference to Video Generation")
+            : await deductCredits("imageToVideo", "Reference to Video Generation")
+
+        return {
+            success: true,
+            videoUrl: videoUrls[0],
+            videoUrls,
+            remainingCredits: deductResult.remainingCredits,
+        }
+    } catch (error) {
+        console.error("Reference-to-video generation failed:", error)
         return {
             success: false,
             error: error instanceof Error ? error.message : "Unknown error occurred",
@@ -529,35 +722,42 @@ export async function generateFrameToFrameVideo(
         }
 
         // Helper function to process and upload image
-        const uploadImage = async (base64Data: string, imageName: string): Promise<string> => {
-            // Remove data URL prefix if present
-            if (base64Data.includes(',')) {
-                base64Data = base64Data.split(',')[1]
-            }
-
-            // Validate base64 data
-            if (!base64Data || base64Data.length < 100) {
-                throw new Error(`Invalid ${imageName} data. Please try uploading a different image.`)
-            }
-
+        const uploadImage = async (imageInput: string, imageName: string): Promise<string> => {
             let binaryData: Buffer
-            try {
-                binaryData = Buffer.from(base64Data, "base64")
-            } catch (e) {
-                throw new Error(`Failed to decode ${imageName} data. Please try a different image.`)
-            }
-
-            // Validate decoded buffer size
-            if (binaryData.length < 1000) {
-                throw new Error(`${imageName} data is too small. Please use a higher quality image.`)
-            }
-
-            // Determine content type from base64 header
             let contentType = "image/jpeg"
-            if (base64Data.startsWith("/9j/")) {
-                contentType = "image/jpeg"
-            } else if (base64Data.startsWith("iVBOR")) {
-                contentType = "image/png"
+
+            if (imageInput.startsWith("http://") || imageInput.startsWith("https://")) {
+                // It's a URL (e.g. Cloudinary) — fetch server-side
+                const fetched = await fetch(imageInput)
+                if (!fetched.ok) throw new Error(`Failed to fetch ${imageName} from URL`)
+                binaryData = Buffer.from(await fetched.arrayBuffer())
+                const ct = fetched.headers.get("content-type")
+                if (ct) contentType = ct.split(";")[0]
+            } else {
+                // Remove data URL prefix if present
+                let base64Data = imageInput
+                if (base64Data.includes(',')) {
+                    base64Data = base64Data.split(',')[1]
+                }
+
+                // Validate base64 data
+                if (!base64Data || base64Data.length < 100) {
+                    throw new Error(`Invalid ${imageName} data. Please try uploading a different image.`)
+                }
+
+                try {
+                    binaryData = Buffer.from(base64Data, "base64")
+                } catch (e) {
+                    throw new Error(`Failed to decode ${imageName} data. Please try a different image.`)
+                }
+
+                // Validate decoded buffer size
+                if (binaryData.length < 1000) {
+                    throw new Error(`${imageName} data is too small. Please use a higher quality image.`)
+                }
+
+                if (base64Data.startsWith("/9j/")) contentType = "image/jpeg"
+                else if (base64Data.startsWith("iVBOR")) contentType = "image/png"
             }
 
             console.log(`Uploading ${imageName}: ${binaryData.length} bytes, type: ${contentType}`)

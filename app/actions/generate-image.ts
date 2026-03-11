@@ -261,16 +261,24 @@ export async function generateImageToImage(
         let accountEmail: string | null = null  // Will be captured from first upload
 
         for (let i = 0; i < imagesToUpload.length; i++) {
-            const base64Data = imagesToUpload[i]
-            // Decode base64 to binary
-            const binaryData = Buffer.from(base64Data, "base64")
+            const imageInput = imagesToUpload[i]
 
-            // Determine content type from base64 header or default to jpeg
+            let binaryData: Buffer
             let contentType = "image/jpeg"
-            if (base64Data.startsWith("/9j/")) {
-                contentType = "image/jpeg"
-            } else if (base64Data.startsWith("iVBOR")) {
-                contentType = "image/png"
+
+            if (imageInput.startsWith("http://") || imageInput.startsWith("https://")) {
+                // It's a URL (e.g. Cloudinary) — fetch server-side
+                const fetched = await fetch(imageInput)
+                if (!fetched.ok) throw new Error(`Failed to fetch reference image`)
+                binaryData = Buffer.from(await fetched.arrayBuffer())
+                const ct = fetched.headers.get("content-type")
+                if (ct) contentType = ct.split(";")[0]
+            } else {
+                // base64 string (raw or with data URL prefix)
+                const base64Data = imageInput.includes(",") ? imageInput.split(",")[1] : imageInput
+                binaryData = Buffer.from(base64Data, "base64")
+                if (base64Data.startsWith("/9j/")) contentType = "image/jpeg"
+                else if (base64Data.startsWith("iVBOR")) contentType = "image/png"
             }
 
             // Upload the reference image as raw binary

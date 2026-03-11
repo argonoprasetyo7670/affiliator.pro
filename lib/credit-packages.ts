@@ -38,7 +38,7 @@ export type CreditPackageId = keyof typeof CREDIT_PACKAGES
 export const CREDIT_COSTS = {
     textToImage: 0.5,
     imageToImage: 0.5,
-    upscaleImage: 0.1,
+    upscaleImage: 1,
     upscaleVideo: 0.5,
     textToVideo: 2,
     imageToVideo: 2,

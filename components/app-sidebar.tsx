@@ -23,6 +23,7 @@ import {
   Coins,
   Shield,
   Bot,
+  FolderOpen,
 } from "lucide-react"
 
 // Navigation items
@@ -31,6 +32,11 @@ const baseNavItems = [
     title: "Dashboard",
     url: "/dashboard",
     icon: LayoutDashboard,
+  },
+  {
+    title: "Projects",
+    url: "/dashboard/projects",
+    icon: FolderOpen,
   },
   {
     title: "Image Tools",

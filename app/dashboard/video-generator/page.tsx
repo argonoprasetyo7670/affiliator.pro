@@ -14,6 +14,7 @@ import {
 import {
     Send,
     Image as ImageIcon,
+    Images,
     X,
     Loader2,
     Download,
@@ -21,11 +22,11 @@ import {
     Shield,
 } from "lucide-react"
 import { submitTextToVideo, submitImageToVideo } from "@/app/actions/generate-video-captcha"
-import { generateImageToVideo, checkVideoJobStatus } from "@/app/actions/generate-video"
+import { generateImageToVideo, generateReferenceToVideo, checkVideoJobStatus } from "@/app/actions/generate-video"
 import { toast } from "sonner"
 
 type AspectRatio = "landscape" | "portrait"
-type VideoModel = "veo-3.1-quality" | "veo-3.1-fast" | "veo-3.1-fast-relaxed"
+type ImageMode = "startFrame" | "reference"
 
 interface GeneratedVideo {
     id: string
@@ -33,6 +34,7 @@ interface GeneratedVideo {
     videoUrl: string
     aspectRatio: AspectRatio
     startImage: string | null
+    referenceImages?: string[]
     createdAt: Date
     mediaGenerationId?: string
 }
@@ -42,17 +44,14 @@ const aspectRatioOptions: { value: AspectRatio; label: string; icon: string }[] 
     { value: "portrait", label: "Portrait (9:16)", icon: "📱" },
 ]
 
-const modelOptions: { value: VideoModel; label: string; description: string }[] = [
-    { value: "veo-3.1-fast-relaxed", label: "Fast Relaxed", description: "Tercepat, antri" },
-    { value: "veo-3.1-fast", label: "Fast", description: "Cepat, prioritas" },
-    { value: "veo-3.1-quality", label: "Quality", description: "Kualitas terbaik" },
-]
+
 
 export default function VideoCaptchaPage() {
     const [prompt, setPrompt] = useState("")
     const [aspectRatio, setAspectRatio] = useState<AspectRatio>("landscape")
-    const [model, setModel] = useState<VideoModel>("veo-3.1-fast-relaxed")
+    const [imageMode, setImageMode] = useState<ImageMode>("startFrame")
     const [startImage, setStartImage] = useState<string | null>(null)
+    const [referenceImages, setReferenceImages] = useState<string[]>([])
     const [isGenerating, setIsGenerating] = useState(false)
     const [generatedVideos, setGeneratedVideos] = useState<GeneratedVideo[]>([])
     const [previewVideo, setPreviewVideo] = useState<string | null>(null)
@@ -62,19 +61,18 @@ export default function VideoCaptchaPage() {
 
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files
-        if (files && files[0]) {
-            const file = files[0]
+        if (!files || files.length === 0) return
 
+        if (imageMode === "startFrame") {
+            const file = files[0]
             if (!file.type.startsWith('image/')) {
                 toast.error("Pilih file gambar")
                 return
             }
-
             if (file.size > 10 * 1024 * 1024) {
                 toast.error("Ukuran gambar maksimal 10MB")
                 return
             }
-
             const reader = new FileReader()
             reader.onload = (event) => {
                 if (event.target?.result) {
@@ -84,6 +82,26 @@ export default function VideoCaptchaPage() {
             }
             reader.onerror = () => toast.error("Gagal membaca file gambar")
             reader.readAsDataURL(file)
+        } else {
+            // Reference mode: up to 3 images
+            const remainingSlots = 3 - referenceImages.length
+            if (remainingSlots <= 0) {
+                toast.error("Maksimal 3 reference images")
+                return
+            }
+            const filesToProcess = Array.from(files).slice(0, remainingSlots)
+            for (const file of filesToProcess) {
+                if (!file.type.startsWith('image/')) continue
+                if (file.size > 10 * 1024 * 1024) continue
+                const reader = new FileReader()
+                reader.onload = (event) => {
+                    if (event.target?.result) {
+                        setReferenceImages(prev => [...prev, event.target!.result as string])
+                    }
+                }
+                reader.readAsDataURL(file)
+            }
+            toast.success(`Reference image ditambahkan`)
         }
 
         if (fileInputRef.current) fileInputRef.current.value = ""
@@ -91,6 +109,16 @@ export default function VideoCaptchaPage() {
 
     const removeStartImage = () => {
         setStartImage(null)
+    }
+
+    const removeReferenceImage = (index: number) => {
+        setReferenceImages(prev => prev.filter((_, i) => i !== index))
+    }
+
+    const switchImageMode = (newMode: ImageMode) => {
+        setImageMode(newMode)
+        setStartImage(null)
+        setReferenceImages([])
     }
 
     const getProxiedVideoUrl = (url: string) => {
@@ -133,6 +161,7 @@ export default function VideoCaptchaPage() {
         setIsGenerating(true)
         const currentPrompt = prompt.trim()
         const currentStartImage = startImage
+        const currentReferenceImages = [...referenceImages]
 
         setTimeout(() => {
             messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -140,9 +169,20 @@ export default function VideoCaptchaPage() {
 
         try {
             let result
+            let operationType: "textToVideo" | "imageToVideo" = "textToVideo"
 
-            if (currentStartImage) {
-                // Image-to-video: use existing server action which handles upload
+            if (currentReferenceImages.length > 0) {
+                // R2V mode: reference images for style/composition
+                toast.info(`Mengupload ${currentReferenceImages.length} reference image & generating...`)
+                result = await generateReferenceToVideo({
+                    prompt: currentPrompt,
+                    referenceImagesBase64: currentReferenceImages,
+                    aspectRatio,
+                    model: "veo-3.1-fast-relaxed",
+                })
+                operationType = "imageToVideo"
+            } else if (currentStartImage) {
+                // I2V mode: start frame
                 toast.info("Mengupload gambar & generating...")
                 const base64Image = currentStartImage.split(",")[1] || currentStartImage
                 result = await generateImageToVideo({
@@ -150,27 +190,28 @@ export default function VideoCaptchaPage() {
                     startImageBase64: base64Image,
                     aspectRatio,
                 })
+                operationType = "imageToVideo"
             } else {
-                // Text-to-video with captcha
+                // T2V: text-to-video with captcha
                 result = await submitTextToVideo({
                     prompt: currentPrompt,
-                    model,
+                    model: "veo-3.1-fast-relaxed",
                     aspectRatio,
                 })
+                operationType = "textToVideo"
             }
 
             if (!result.success) {
-                throw new Error("Generate gagal")
+                throw new Error((result as { error?: string; message?: string }).error || (result as { message?: string }).message || "Generate gagal")
             }
 
             // Poll for completion
             if (result.jobId) {
-                const isCaptcha = !currentStartImage
-                toast.info(isCaptcha
+                const modeLabel = currentReferenceImages.length > 0 ? "R2V" : currentStartImage ? "I2V" : "T2V"
+                toast.info(modeLabel === "T2V"
                     ? "🔐 Captcha token injected! Generating video... (1-3 menit)"
-                    : "🎬 Generating video... (1-3 menit)")
-                const operation = currentStartImage ? "imageToVideo" : "textToVideo"
-                const pollResult = await pollJobStatus(result.jobId, operation)
+                    : `🎬 ${modeLabel} Generating video... (1-3 menit)`)
+                const pollResult = await pollJobStatus(result.jobId, operationType)
 
                 if (pollResult?.videoUrl) {
                     const newVideo: GeneratedVideo = {
@@ -179,6 +220,7 @@ export default function VideoCaptchaPage() {
                         videoUrl: pollResult.videoUrl,
                         aspectRatio,
                         startImage: currentStartImage,
+                        referenceImages: currentReferenceImages.length > 0 ? currentReferenceImages : undefined,
                         createdAt: new Date(),
                         mediaGenerationId: pollResult.mediaGenerationId,
                     }
@@ -186,6 +228,7 @@ export default function VideoCaptchaPage() {
                     setGeneratedVideos(prev => [...prev, newVideo])
                     setPrompt("")
                     setStartImage(null)
+                    setReferenceImages([])
                     toast.success("Video berhasil dibuat! 🎬")
 
                     setTimeout(() => {
@@ -278,6 +321,19 @@ export default function VideoCaptchaPage() {
                                             />
                                         </div>
                                     )}
+                                    {video.referenceImages && video.referenceImages.length > 0 && (
+                                        <div className="mt-2 flex gap-1">
+                                            {video.referenceImages.map((img, idx) => (
+                                                <img
+                                                    key={idx}
+                                                    src={img}
+                                                    alt={`Reference ${idx + 1}`}
+                                                    className="w-10 h-10 rounded object-cover"
+                                                />
+                                            ))}
+                                            <span className="text-[10px] self-end opacity-70">R2V</span>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
@@ -356,47 +412,52 @@ export default function VideoCaptchaPage() {
 
             {/* Input Area - Fixed at bottom */}
             <div className="border-t bg-background p-3">
-                {/* Start Image Preview */}
-                {startImage && (
-                    <div className="flex gap-2 mb-3">
-                        <div className="relative">
-                            <img
-                                src={startImage}
-                                alt="Start frame"
-                                className="w-14 h-14 rounded-lg object-cover border"
-                            />
-                            <button
-                                onClick={removeStartImage}
-                                className="absolute -top-2 -right-2 w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center"
-                            >
-                                <X className="w-3 h-3" />
-                            </button>
-                            <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] bg-emerald-500 text-white px-1 rounded">
-                                Start
-                            </span>
-                        </div>
+                {/* Image Previews */}
+                {(startImage || referenceImages.length > 0) && (
+                    <div className="flex gap-2 mb-3 flex-wrap">
+                        {imageMode === "startFrame" && startImage && (
+                            <div className="relative">
+                                <img
+                                    src={startImage}
+                                    alt="Start frame"
+                                    className="w-14 h-14 rounded-lg object-cover border"
+                                />
+                                <button
+                                    onClick={removeStartImage}
+                                    className="absolute -top-2 -right-2 w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
+                                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] bg-emerald-500 text-white px-1 rounded">
+                                    Start
+                                </span>
+                            </div>
+                        )}
+                        {imageMode === "reference" && referenceImages.map((img, idx) => (
+                            <div key={idx} className="relative">
+                                <img
+                                    src={img}
+                                    alt={`Reference ${idx + 1}`}
+                                    className="w-14 h-14 rounded-lg object-cover border"
+                                />
+                                <button
+                                    onClick={() => removeReferenceImage(idx)}
+                                    className="absolute -top-2 -right-2 w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
+                                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] bg-purple-500 text-white px-1 rounded">
+                                    Ref {idx + 1}
+                                </span>
+                            </div>
+                        ))}
                     </div>
                 )}
 
                 <div className="flex flex-col gap-2">
-                    {/* Top row: Model + Aspect Ratio */}
-                    <div className="flex gap-2">
-                        <Select value={model} onValueChange={(v) => setModel(v as VideoModel)}>
-                            <SelectTrigger className="flex-1">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {modelOptions.map((option) => (
-                                    <SelectItem key={option.value} value={option.value}>
-                                        <span className="flex items-center gap-2">
-                                            <span>⚡</span>
-                                            <span>{option.label}</span>
-                                            <span className="text-xs text-muted-foreground">({option.description})</span>
-                                        </span>
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
+                    {/* Top row: Model label + Aspect Ratio + Image Mode */}
+                    <div className="flex gap-2 items-center">
+                        <span className="px-3 py-2 rounded-md text-sm bg-muted text-muted-foreground whitespace-nowrap">⚡ Veo 3.1 Fast</span>
 
                         <Select value={aspectRatio} onValueChange={(v) => setAspectRatio(v as AspectRatio)}>
                             <SelectTrigger className="flex-1">
@@ -413,6 +474,26 @@ export default function VideoCaptchaPage() {
                                 ))}
                             </SelectContent>
                         </Select>
+
+                        <Select value={imageMode} onValueChange={(v) => switchImageMode(v as ImageMode)}>
+                            <SelectTrigger className="w-[140px]">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="startFrame">
+                                    <span className="flex items-center gap-2">
+                                        <ImageIcon className="w-3 h-3" />
+                                        <span>Start Frame</span>
+                                    </span>
+                                </SelectItem>
+                                <SelectItem value="reference">
+                                    <span className="flex items-center gap-2">
+                                        <Images className="w-3 h-3" />
+                                        <span>Reference</span>
+                                    </span>
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
 
                     {/* Main input row */}
@@ -421,17 +502,23 @@ export default function VideoCaptchaPage() {
                             type="file"
                             ref={fileInputRef}
                             onChange={handleImageUpload}
-                            accept="image/jpeg,image/png"
+                            accept="image/jpeg,image/png,image/webp"
                             className="hidden"
+                            multiple={imageMode === "reference"}
                         />
                         <Button
                             variant="outline"
                             size="icon"
                             onClick={() => fileInputRef.current?.click()}
                             className="shrink-0 h-10 w-10"
-                            title="Tambah start image untuk I2V"
+                            disabled={imageMode === "startFrame" && !!startImage || imageMode === "reference" && referenceImages.length >= 3}
+                            title={imageMode === "startFrame" ? "Tambah start image (I2V)" : `Tambah reference image (${referenceImages.length}/3)`}
                         >
-                            <ImageIcon className="w-5 h-5" />
+                            {imageMode === "reference" ? (
+                                <Images className="w-5 h-5" />
+                            ) : (
+                                <ImageIcon className="w-5 h-5" />
+                            )}
                         </Button>
 
                         <Textarea

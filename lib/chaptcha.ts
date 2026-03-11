@@ -10,7 +10,6 @@ const CAPTCHA_TIMEOUT_MS = 120_000; // 120s
 const CAPTCHA_SERVERS: string[] = (
     process.env.CAPTCHA_SERVERS ||
     [
-        'https://b520-157-66-55-198.ngrok-free.app',
         'https://prosecrecy-unsubjectively-makenzie.ngrok-free.dev',
     ].join(',')
 ).split(',').map(s => s.trim()).filter(Boolean);
@@ -52,6 +51,8 @@ export async function getCaptchaToken(): Promise<string | null> {
             }
 
             const data = await response.json();
+            console.log({ data });
+
             const token = data.token || data.captchaToken || data.recaptchaToken || data.data?.token;
 
             if (!token || token.length < 20) {

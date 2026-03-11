@@ -7,31 +7,31 @@ datasource db {
 }
 
 model User {
-  id            String       @id @default(cuid())
-  name          String?
-  email         String       @unique
-  emailVerified DateTime?
-  password      String?
-  image         String?
-  role          String       @default("user") // "user" or "admin"
-  credits       Float        @default(0) // Credit balance
-  discountPercent Int        @default(0) // Discount percentage (0-100)
-  referralCode  String?      @unique // Unique referral code for this user
-  referredBy    String?      // ID of user who referred this user
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  accounts      Account[]
-  apiKeys       ApiKey[]
-  sessions      Session[]
-  usageStats    UsageStats[]
-  subscription  Subscription?
-  transactions  Transaction[]
-  referrals     Referral[]   @relation("UserReferrals") // Users referred by this user
-  creditHistory CreditHistory[]
+  id              String          @id @default(cuid())
+  name            String?
+  email           String          @unique
+  emailVerified   DateTime?
+  password        String?
+  image           String?
+  role            String          @default("user")
+  credits         Float           @default(0)
+  discountPercent Int             @default(0)
+  referralCode    String?         @unique
+  referredBy      String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  accounts        Account[]
+  apiKeys         ApiKey[]
+  creditHistory   CreditHistory[]
+  projects        Project[]
+  referrals       Referral[]      @relation("UserReferrals")
+  sessions        Session[]
+  subscription    Subscription?
+  transactions    Transaction[]
+  usageStats      UsageStats[]
 
   @@map("users")
 }
-
 
 model Account {
   id                String  @id @default(cuid())
@@ -99,16 +99,16 @@ model UsageStats {
 }
 
 model Subscription {
-  id          String   @id @default(cuid())
-  userId      String   @unique
-  plan        String   // "trial", "starter", "pro"
-  status      String   @default("active") // "active", "expired"
-  startDate   DateTime @default(now())
-  endDate     DateTime
-  price       Int      // in IDR
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  plan      String
+  status    String   @default("active")
+  startDate DateTime @default(now())
+  endDate   DateTime
+  price     Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("subscriptions")
 }
@@ -119,7 +119,7 @@ model Transaction {
   orderId       String   @unique
   plan          String
   amount        Int
-  status        String   @default("pending") // "pending", "success", "failed", "expired"
+  status        String   @default("pending")
   paymentType   String?
   transactionId String?
   midtransToken String?
@@ -131,14 +131,14 @@ model Transaction {
 }
 
 model Referral {
-  id           String   @id @default(cuid())
-  referrerId   String   // User who made the referral
-  referredId   String   // User who was referred
-  status       String   @default("pending") // "pending", "completed", "rewarded"
-  reward       Int      @default(0) // Reward amount in IDR
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  referrer     User     @relation("UserReferrals", fields: [referrerId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  referrerId String
+  referredId String
+  status     String   @default("pending")
+  reward     Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  referrer   User     @relation("UserReferrals", fields: [referrerId], references: [id], onDelete: Cascade)
 
   @@map("referrals")
 }
@@ -146,13 +146,41 @@ model Referral {
 model CreditHistory {
   id           String   @id @default(cuid())
   userId       String
-  amount       Float    // Positive = credit added, Negative = credit used
-  type         String   // "purchase", "usage", "refund", "bonus", "admin"
+  amount       Float
+  type         String
   description  String
-  balanceAfter Float    // Balance after this transaction
+  balanceAfter Float
   createdAt    DateTime @default(now())
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("credit_history")
 }
 
+model Project {
+  id          String         @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  assets      ProjectAsset[]
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("projects")
+}
+
+model ProjectAsset {
+  id                String   @id @default(cuid())
+  projectId         String
+  type              String
+  source            String
+  name              String
+  url               String
+  prompt            String?
+  aspectRatio       String?
+  createdAt         DateTime @default(now())
+  mediaGenerationId String?
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("project_assets")
+}

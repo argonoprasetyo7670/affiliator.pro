@@ -20,6 +20,7 @@ import {
 import {
     Send,
     Image as ImageIcon,
+    Images,
     X,
     Loader2,
     Download,
@@ -28,10 +29,11 @@ import {
     Video,
     Zap
 } from "lucide-react"
-import { generateTextToVideo, generateImageToVideo, checkVideoJobStatus, upscaleVideo } from "@/app/actions/generate-video"
+import { generateTextToVideo, generateImageToVideo, generateReferenceToVideo, checkVideoJobStatus, upscaleVideo } from "@/app/actions/generate-video"
 import { toast } from "sonner"
 
 type AspectRatio = "landscape" | "portrait"
+type ImageMode = "startFrame" | "reference"
 
 interface UpscaledVersion {
     resolution: "1080p" | "4K"
@@ -45,6 +47,7 @@ interface GeneratedVideo {
     videoUrl: string
     aspectRatio: AspectRatio
     startImage: string | null
+    referenceImages?: string[]
     createdAt: Date
     mediaGenerationId?: string
     upscaledVersions?: UpscaledVersion[]
@@ -58,7 +61,9 @@ const aspectRatioOptions: { value: AspectRatio; label: string; icon: string }[] 
 export default function VideoGeneratorPage() {
     const [prompt, setPrompt] = useState("")
     const [aspectRatio, setAspectRatio] = useState<AspectRatio>("landscape")
+    const [imageMode, setImageMode] = useState<ImageMode>("startFrame")
     const [startImage, setStartImage] = useState<string | null>(null)
+    const [referenceImages, setReferenceImages] = useState<string[]>([])
     const [isGenerating, setIsGenerating] = useState(false)
     const [generatedVideos, setGeneratedVideos] = useState<GeneratedVideo[]>([])
     const [previewVideo, setPreviewVideo] = useState<string | null>(null)
@@ -69,43 +74,63 @@ export default function VideoGeneratorPage() {
 
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.target.files
-        if (files && files[0]) {
-            const file = files[0]
+        if (!files || files.length === 0) return
 
-            // Validate file type
+        if (imageMode === "startFrame") {
+            const file = files[0]
             if (!file.type.startsWith('image/')) {
                 toast.error("Please select an image file")
                 return
             }
-
-            // Validate file size (max 10MB)
             if (file.size > 10 * 1024 * 1024) {
                 toast.error("Image size must be less than 10MB")
                 return
             }
-
             const reader = new FileReader()
             reader.onload = (event) => {
                 if (event.target?.result) {
-                    const result = event.target.result as string
-                    setStartImage(result)
+                    setStartImage(event.target.result as string)
                     toast.success("Start image added")
                 }
             }
-            reader.onerror = () => {
-                toast.error("Failed to read image file")
-            }
+            reader.onerror = () => toast.error("Failed to read image file")
             reader.readAsDataURL(file)
+        } else {
+            const remainingSlots = 3 - referenceImages.length
+            if (remainingSlots <= 0) {
+                toast.error("Maximum 3 reference images")
+                return
+            }
+            const filesToProcess = Array.from(files).slice(0, remainingSlots)
+            for (const file of filesToProcess) {
+                if (!file.type.startsWith('image/')) continue
+                if (file.size > 10 * 1024 * 1024) continue
+                const reader = new FileReader()
+                reader.onload = (event) => {
+                    if (event.target?.result) {
+                        setReferenceImages(prev => [...prev, event.target!.result as string])
+                    }
+                }
+                reader.readAsDataURL(file)
+            }
+            toast.success("Reference image added")
         }
 
-        // Reset input to allow selecting the same file again
-        if (fileInputRef.current) {
-            fileInputRef.current.value = ""
-        }
+        if (fileInputRef.current) fileInputRef.current.value = ""
     }
 
     const removeStartImage = () => {
         setStartImage(null)
+    }
+
+    const removeReferenceImage = (index: number) => {
+        setReferenceImages(prev => prev.filter((_, i) => i !== index))
+    }
+
+    const switchImageMode = (newMode: ImageMode) => {
+        setImageMode(newMode)
+        setStartImage(null)
+        setReferenceImages([])
     }
 
     // Proxy external videos to bypass CORS
@@ -177,6 +202,7 @@ export default function VideoGeneratorPage() {
         setIsGenerating(true)
         const currentPrompt = prompt.trim()
         const currentStartImage = startImage
+        const currentReferenceImages = [...referenceImages]
 
         // Scroll to show loading indicator
         setTimeout(() => {
@@ -185,17 +211,27 @@ export default function VideoGeneratorPage() {
 
         try {
             let result
+            let operationType: "textToVideo" | "imageToVideo" = "textToVideo"
 
-            if (currentStartImage) {
-                // Image-to-video: use start image
+            if (currentReferenceImages.length > 0) {
+                // R2V mode: reference images
+                result = await generateReferenceToVideo({
+                    prompt: currentPrompt,
+                    referenceImagesBase64: currentReferenceImages,
+                    aspectRatio,
+                })
+                operationType = "imageToVideo"
+            } else if (currentStartImage) {
+                // I2V mode: start image
                 const base64Image = currentStartImage.split(",")[1] || currentStartImage
                 result = await generateImageToVideo({
                     prompt: currentPrompt,
                     startImageBase64: base64Image,
                     aspectRatio,
                 })
+                operationType = "imageToVideo"
             } else {
-                // Text-to-video
+                // T2V mode: text-to-video
                 result = await generateTextToVideo({
                     prompt: currentPrompt,
                     aspectRatio,
@@ -212,8 +248,7 @@ export default function VideoGeneratorPage() {
             // If we got a jobId, poll for completion
             if (!videoUrl && result.jobId) {
                 toast.info("Generating video... This may take 1-3 minutes.")
-                const operation = currentStartImage ? "imageToVideo" : "textToVideo"
-                const pollResult = await pollJobStatus(result.jobId, operation)
+                const pollResult = await pollJobStatus(result.jobId, operationType)
                 if (pollResult) {
                     videoUrl = pollResult.videoUrl
                     mediaGenerationId = pollResult.mediaGenerationId
@@ -230,6 +265,7 @@ export default function VideoGeneratorPage() {
                 videoUrl,
                 aspectRatio,
                 startImage: currentStartImage,
+                referenceImages: currentReferenceImages.length > 0 ? currentReferenceImages : undefined,
                 createdAt: new Date(),
                 mediaGenerationId,
             }
@@ -237,6 +273,7 @@ export default function VideoGeneratorPage() {
             setGeneratedVideos(prev => [...prev, newVideo])
             setPrompt("")
             setStartImage(null)
+            setReferenceImages([])
             toast.success("Video generated successfully!")
 
             // Scroll to bottom
@@ -382,6 +419,19 @@ export default function VideoGeneratorPage() {
                                                 alt="Start frame"
                                                 className="w-12 h-12 rounded object-cover"
                                             />
+                                        </div>
+                                    )}
+                                    {video.referenceImages && video.referenceImages.length > 0 && (
+                                        <div className="mt-2 flex gap-1">
+                                            {video.referenceImages.map((img, idx) => (
+                                                <img
+                                                    key={idx}
+                                                    src={img}
+                                                    alt={`Reference ${idx + 1}`}
+                                                    className="w-10 h-10 rounded object-cover"
+                                                />
+                                            ))}
+                                            <span className="text-[10px] self-end opacity-70">R2V</span>
                                         </div>
                                     )}
                                 </div>
@@ -548,31 +598,51 @@ export default function VideoGeneratorPage() {
 
             {/* Input Area - Fixed at bottom */}
             <div className="border-t bg-background p-3">
-                {/* Start Image Preview */}
-                {startImage && (
-                    <div className="flex gap-2 mb-3">
-                        <div className="relative">
-                            <img
-                                src={startImage}
-                                alt="Start frame"
-                                className="w-14 h-14 rounded-lg object-cover border"
-                            />
-                            <button
-                                onClick={removeStartImage}
-                                className="absolute -top-2 -right-2 w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center"
-                            >
-                                <X className="w-3 h-3" />
-                            </button>
-                            <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] bg-blue-500 text-white px-1 rounded">
-                                Start
-                            </span>
-                        </div>
+                {/* Image Previews */}
+                {(startImage || referenceImages.length > 0) && (
+                    <div className="flex gap-2 mb-3 flex-wrap">
+                        {imageMode === "startFrame" && startImage && (
+                            <div className="relative">
+                                <img
+                                    src={startImage}
+                                    alt="Start frame"
+                                    className="w-14 h-14 rounded-lg object-cover border"
+                                />
+                                <button
+                                    onClick={removeStartImage}
+                                    className="absolute -top-2 -right-2 w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
+                                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] bg-blue-500 text-white px-1 rounded">
+                                    Start
+                                </span>
+                            </div>
+                        )}
+                        {imageMode === "reference" && referenceImages.map((img, idx) => (
+                            <div key={idx} className="relative">
+                                <img
+                                    src={img}
+                                    alt={`Reference ${idx + 1}`}
+                                    className="w-14 h-14 rounded-lg object-cover border"
+                                />
+                                <button
+                                    onClick={() => removeReferenceImage(idx)}
+                                    className="absolute -top-2 -right-2 w-5 h-5 bg-destructive text-destructive-foreground rounded-full flex items-center justify-center"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
+                                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] bg-purple-500 text-white px-1 rounded">
+                                    Ref {idx + 1}
+                                </span>
+                            </div>
+                        ))}
                     </div>
                 )}
 
                 {/* Stack layout for both mobile and desktop */}
                 <div className="flex flex-col gap-2">
-                    {/* Top row: Aspect Ratio */}
+                    {/* Top row: Aspect Ratio + Image Mode */}
                     <div className="flex gap-2">
                         <Select value={aspectRatio} onValueChange={(v) => setAspectRatio(v as AspectRatio)}>
                             <SelectTrigger className="flex-1">
@@ -589,26 +659,51 @@ export default function VideoGeneratorPage() {
                                 ))}
                             </SelectContent>
                         </Select>
+
+                        <Select value={imageMode} onValueChange={(v) => switchImageMode(v as ImageMode)}>
+                            <SelectTrigger className="w-[140px]">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="startFrame">
+                                    <span className="flex items-center gap-2">
+                                        <ImageIcon className="w-3 h-3" />
+                                        <span>Start Frame</span>
+                                    </span>
+                                </SelectItem>
+                                <SelectItem value="reference">
+                                    <span className="flex items-center gap-2">
+                                        <Images className="w-3 h-3" />
+                                        <span>Reference</span>
+                                    </span>
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
 
                     {/* Main input row */}
                     <div className="flex gap-2 items-end">
-                        {/* Start Image Upload */}
                         <input
                             type="file"
                             ref={fileInputRef}
                             onChange={handleImageUpload}
-                            accept="image/jpeg,image/png"
+                            accept="image/jpeg,image/png,image/webp"
                             className="hidden"
+                            multiple={imageMode === "reference"}
                         />
                         <Button
                             variant="outline"
                             size="icon"
                             onClick={() => fileInputRef.current?.click()}
                             className="shrink-0 h-10 w-10"
-                            title="Add start image for I2V"
+                            disabled={imageMode === "startFrame" && !!startImage || imageMode === "reference" && referenceImages.length >= 3}
+                            title={imageMode === "startFrame" ? "Add start image (I2V)" : `Add reference image (${referenceImages.length}/3)`}
                         >
-                            <ImageIcon className="w-5 h-5" />
+                            {imageMode === "reference" ? (
+                                <Images className="w-5 h-5" />
+                            ) : (
+                                <ImageIcon className="w-5 h-5" />
+                            )}
                         </Button>
 
                         {/* Prompt Input */}
