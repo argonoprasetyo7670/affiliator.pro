@@ -456,7 +456,10 @@ export async function generateReferenceToVideo(
         }
 
         // Upload each reference image and collect mediaGenerationIds
+        // Important: All reference images must be uploaded to the same account
+        // First upload: no email (let API choose), then use returned email for subsequent uploads
         const mediaGenerationIds: string[] = []
+        let accountEmail: string | null = null  // Will be captured from first upload
 
         for (let i = 0; i < request.referenceImagesBase64.length; i++) {
             const imageInput = request.referenceImagesBase64[i]
@@ -485,7 +488,13 @@ export async function generateReferenceToVideo(
 
             console.log(`Uploading reference image ${i + 1}: ${binaryData.length} bytes, type: ${contentType}`)
 
-            const uploadResponse = await fetch(`${USEAPI_BASE_URL}/assets`, {
+            // First upload: no email path (API auto-selects account)
+            // Subsequent uploads: use email from first upload response
+            const assetUrl: string = accountEmail
+                ? `${USEAPI_BASE_URL}/assets/${encodeURIComponent(accountEmail)}`
+                : `${USEAPI_BASE_URL}/assets`
+
+            const uploadResponse = await fetch(assetUrl, {
                 method: "POST",
                 headers: {
                     "Authorization": `Bearer ${USEAPI_TOKEN}`,
@@ -508,6 +517,12 @@ export async function generateReferenceToVideo(
 
             if (!mediaGenId) {
                 throw new Error(`Failed to upload reference image ${i + 1} - no media ID received`)
+            }
+
+            // Capture email from first upload response for subsequent uploads
+            if (i === 0 && uploadData.email) {
+                accountEmail = uploadData.email
+                console.log("Using account email for subsequent uploads:", accountEmail)
             }
 
             console.log(`Reference image ${i + 1} uploaded, mediaGenerationId:`, mediaGenId)
@@ -729,6 +744,8 @@ export async function generateFrameToFrameVideo(
         }
 
         // Helper function to process and upload image
+        // Accepts optional email to ensure all assets use the same account
+        let accountEmail: string | null = null  // Will be captured from first upload
         const uploadImage = async (imageInput: string, imageName: string): Promise<string> => {
             let binaryData: Buffer
             let contentType = "image/jpeg"
@@ -769,8 +786,13 @@ export async function generateFrameToFrameVideo(
 
             console.log(`Uploading ${imageName}: ${binaryData.length} bytes, type: ${contentType}`)
 
-            // Upload the image as raw binary
-            const uploadResponse = await fetch(`${USEAPI_BASE_URL}/assets`, {
+            // First upload: no email path (API auto-selects account)
+            // Subsequent uploads: use email from first upload response
+            const assetUrl: string = accountEmail
+                ? `${USEAPI_BASE_URL}/assets/${encodeURIComponent(accountEmail)}`
+                : `${USEAPI_BASE_URL}/assets`
+
+            const uploadResponse = await fetch(assetUrl, {
                 method: "POST",
                 headers: {
                     "Authorization": `Bearer ${USEAPI_TOKEN}`,
@@ -796,14 +818,20 @@ export async function generateFrameToFrameVideo(
                 throw new Error(`Failed to upload ${imageName} - no media ID received`)
             }
 
+            // Capture email from first upload response for subsequent uploads
+            if (!accountEmail && uploadData.email) {
+                accountEmail = uploadData.email
+                console.log("Using account email for subsequent uploads:", accountEmail)
+            }
+
             console.log(`${imageName} uploaded successfully, mediaGenerationId:`, mediaGenerationId)
             return mediaGenerationId
         }
 
-        // Upload start image
+        // Upload start image (first upload captures email for account pinning)
         const startMediaGenerationId = await uploadImage(request.startImageBase64, "start image")
 
-        // Upload end image
+        // Upload end image (uses same account email as start image)
         const endMediaGenerationId = await uploadImage(request.endImageBase64, "end image")
 
         // 🔐 Inject captcha token from custom server

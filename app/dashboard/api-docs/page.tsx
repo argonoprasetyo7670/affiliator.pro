@@ -535,8 +535,10 @@ console.log(upscaleData.imageUrl);  // Base64 data URL`}
                             language="json"
                             code={`{
   "prompt": "A drone flying over a forest",
-  "aspectRatio": "landscape",  // "landscape" or "portrait"
-  "startImage": "base64..."    // Optional: for Image-to-Video mode
+  "aspectRatio": "landscape",       // "landscape" or "portrait"
+  "startImage": "base64...",        // Optional: for Image-to-Video (I2V)
+  "endImage": "base64...",          // Optional: for Frame-to-Frame (I2V-FL), requires startImage
+  "referenceImages": ["base64..."]  // Optional: 1-3 images for Reference-to-Video (R2V)
 }`}
                         />
 
@@ -554,6 +556,18 @@ console.log(upscaleData.imageUrl);  // Base64 data URL`}
                                 <strong>Note:</strong> Video generation always returns a jobId.
                                 Poll the /api/jobs/{"{jobId}"} endpoint until status is "completed".
                             </p>
+                        </div>
+
+                        <div className="mt-4 p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                            <p className="text-sm text-blue-600 dark:text-blue-400 mb-2">
+                                <strong>Video Modes:</strong>
+                            </p>
+                            <ul className="text-sm text-blue-600 dark:text-blue-400 list-disc list-inside space-y-1">
+                                <li><strong>T2V</strong> — Text-to-Video: prompt only, no images</li>
+                                <li><strong>I2V</strong> — Image-to-Video: prompt + startImage</li>
+                                <li><strong>I2V-FL</strong> — Frame-to-Frame: prompt + startImage + endImage</li>
+                                <li><strong>R2V</strong> — Reference-to-Video: prompt + referenceImages (1-3)</li>
+                            </ul>
                         </div>
 
                         <h4 className="font-medium mt-6 mb-3">Example (cURL)</h4>
@@ -616,6 +630,71 @@ const response = await fetch('${baseUrl}/api/generate/video', {
     'Authorization': 'Bearer <your_api_token>',
   },
   body: formData,
+});
+
+const { jobId } = await response.json();
+// Poll for completion...`}
+                        />
+
+                        <h4 className="font-medium mt-6 mb-3">Frame-to-Frame / I2V-FL (start + end frame)</h4>
+                        <CodeBlock
+                            language="bash"
+                            code={`# Frame-to-Frame: generates video transitioning from start to end image
+curl -X POST ${baseUrl}/api/generate/video \\
+  -H "Authorization: Bearer <your_api_token>" \\
+  -F "prompt=Smooth transition between two scenes" \\
+  -F "aspectRatio=landscape" \\
+  -F "startImage=@/path/to/start-frame.jpg" \\
+  -F "endImage=@/path/to/end-frame.jpg"`}
+                        />
+
+                        <h4 className="font-medium mt-6 mb-3">Frame-to-Frame (JavaScript FormData)</h4>
+                        <CodeBlock
+                            language="javascript"
+                            code={`// Frame-to-Frame: start image + end image
+const formData = new FormData();
+formData.append('prompt', 'Smooth cinematic transition');
+formData.append('aspectRatio', 'landscape');
+formData.append('startImage', startImageFile);  // File object
+formData.append('endImage', endImageFile);      // File object
+
+const response = await fetch('${baseUrl}/api/generate/video', {
+  method: 'POST',
+  headers: { 'Authorization': 'Bearer <your_api_token>' },
+  body: formData,
+});
+
+const { jobId } = await response.json();
+// Poll for completion...`}
+                        />
+
+                        <h4 className="font-medium mt-6 mb-3">Reference-to-Video / R2V (1-3 reference images)</h4>
+                        <CodeBlock
+                            language="bash"
+                            code={`# R2V: use reference images for style/composition guidance
+curl -X POST ${baseUrl}/api/generate/video \\
+  -H "Authorization: Bearer <your_api_token>" \\
+  -F "prompt=A person walking in this style" \\
+  -F "aspectRatio=landscape" \\
+  -F "referenceImages=@/path/to/ref1.jpg" \\
+  -F "referenceImages=@/path/to/ref2.jpg"`}
+                        />
+
+                        <h4 className="font-medium mt-6 mb-3">Reference-to-Video (JavaScript)</h4>
+                        <CodeBlock
+                            language="javascript"
+                            code={`// R2V with JSON body (base64 images)
+const response = await fetch('${baseUrl}/api/generate/video', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer <your_api_token>',
+  },
+  body: JSON.stringify({
+    prompt: 'A person walking in this style',
+    aspectRatio: 'landscape',
+    referenceImages: [base64Image1, base64Image2],  // Up to 3
+  }),
 });
 
 const { jobId } = await response.json();
