@@ -3,6 +3,7 @@
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { revalidatePath } from "next/cache"
+import { deleteFromCloudinary } from "@/lib/cloudinary"
 
 // Types
 export interface AdminUser {
@@ -561,6 +562,95 @@ export async function getRecentTransactions(limit: number = 5): Promise<{
         return { success: true, transactions }
     } catch (error) {
         console.error("Error getting recent transactions:", error)
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
+        }
+    }
+}
+
+/**
+ * Delete all project assets older than 3 days (admin only)
+ */
+export async function deleteExpiredAssets() {
+    const adminCheck = await checkAdminAccess()
+    if (!adminCheck.isAdmin) {
+        return { success: false, error: "Unauthorized" }
+    }
+
+    try {
+        const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
+
+        // Fetch expired assets first to delete from Cloudinary
+        const expiredAssets = await prisma.projectAsset.findMany({
+            where: {
+                createdAt: { lt: threeDaysAgo },
+            },
+            select: { id: true, url: true, type: true },
+        })
+
+        // Delete from Cloudinary in parallel
+        const cloudinaryDeletes = expiredAssets
+            .filter(a => a.url.includes("res.cloudinary.com"))
+            .map(async (a) => {
+                try {
+                    const parts = a.url.split("/upload/")
+                    if (parts[1]) {
+                        const pathAfterUpload = parts[1].replace(/^v\d+\//, "")
+                        const publicId = pathAfterUpload.replace(/\.[^.]+$/, "")
+                        const resourceType = a.type === "video" ? "video" as const : "image" as const
+                        await deleteFromCloudinary(publicId, resourceType)
+                    }
+                } catch (e) {
+                    console.error(`Cloudinary delete failed for asset ${a.id}:`, e)
+                }
+            })
+
+        await Promise.allSettled(cloudinaryDeletes)
+
+        // Delete from DB
+        const result = await prisma.projectAsset.deleteMany({
+            where: {
+                createdAt: { lt: threeDaysAgo },
+            },
+        })
+
+        return {
+            success: true,
+            deletedCount: result.count,
+        }
+    } catch (error) {
+        console.error("Error deleting expired assets:", error)
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error",
+        }
+    }
+}
+
+/**
+ * Get count of expired assets (older than 3 days)
+ */
+export async function getExpiredAssetsCount() {
+    const adminCheck = await checkAdminAccess()
+    if (!adminCheck.isAdmin) {
+        return { success: false, error: "Unauthorized" }
+    }
+
+    try {
+        const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000)
+
+        const count = await prisma.projectAsset.count({
+            where: {
+                createdAt: {
+                    lt: threeDaysAgo,
+                },
+            },
+        })
+
+        return { success: true, count }
+    } catch (error) {
+        console.error("Error counting expired assets:", error)
         return {
             success: false,
             error: error instanceof Error ? error.message : "Unknown error",

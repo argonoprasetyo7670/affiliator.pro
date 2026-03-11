@@ -39,7 +39,9 @@ export const CREDIT_COSTS = {
     textToImage: 0.5,
     imageToImage: 0.5,
     upscaleImage: 1,
-    upscaleVideo: 0.5,
+    upscaleVideo: 2,
+    upscaleVideo4K: 2,
+    extendVideo: 2,
     textToVideo: 2,
     imageToVideo: 2,
 } as const

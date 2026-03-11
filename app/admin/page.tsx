@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Users, CreditCard, Coins, Clock, TrendingUp, DollarSign } from "lucide-react"
-import { getDashboardStats, getRecentTransactions, type DashboardStats, type AdminTransaction } from "@/app/actions/admin"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Users, CreditCard, Coins, Clock, TrendingUp, DollarSign, Trash2, AlertTriangle, Loader2, CheckCircle2, XCircle } from "lucide-react"
+import { getDashboardStats, getRecentTransactions, deleteExpiredAssets, getExpiredAssetsCount, type DashboardStats, type AdminTransaction } from "@/app/actions/admin"
 import { formatPrice } from "@/lib/credit-packages"
 
 function formatDate(date: Date) {
@@ -36,12 +37,17 @@ export default function AdminDashboardPage() {
     const [stats, setStats] = useState<DashboardStats | null>(null)
     const [recentTransactions, setRecentTransactions] = useState<AdminTransaction[]>([])
     const [loading, setLoading] = useState(true)
+    const [expiredCount, setExpiredCount] = useState(0)
+    const [deletingExpired, setDeletingExpired] = useState(false)
+    const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+    const [deleteResult, setDeleteResult] = useState<{ success: boolean; message: string } | null>(null)
 
     useEffect(() => {
         async function fetchData() {
-            const [statsResult, transactionsResult] = await Promise.all([
+            const [statsResult, transactionsResult, expiredResult] = await Promise.all([
                 getDashboardStats(),
                 getRecentTransactions(5),
+                getExpiredAssetsCount(),
             ])
 
             if (statsResult.success && statsResult.stats) {
@@ -49,6 +55,9 @@ export default function AdminDashboardPage() {
             }
             if (transactionsResult.success && transactionsResult.transactions) {
                 setRecentTransactions(transactionsResult.transactions)
+            }
+            if (expiredResult.success) {
+                setExpiredCount(expiredResult.count ?? 0)
             }
             setLoading(false)
         }
@@ -135,6 +144,107 @@ export default function AdminDashboardPage() {
                     </CardContent>
                 </Card>
             </div>
+
+            {/* Expired Assets */}
+            <Card className={expiredCount > 0 ? "border-orange-300" : ""}>
+                <CardHeader>
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <CardTitle className="flex items-center gap-2">
+                                <AlertTriangle className={`h-5 w-5 ${expiredCount > 0 ? "text-orange-500" : "text-muted-foreground"}`} />
+                                Expired Assets
+                            </CardTitle>
+                            <CardDescription>
+                                Asset yang sudah lebih dari 3 hari (URL expired)
+                            </CardDescription>
+                        </div>
+                        <div className="text-2xl font-bold">{expiredCount}</div>
+                    </div>
+                </CardHeader>
+                <CardContent>
+                    {expiredCount > 0 ? (
+                        <button
+                            onClick={() => { setDeleteResult(null); setShowDeleteDialog(true) }}
+                            disabled={deletingExpired}
+                            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition-colors text-sm font-medium"
+                        >
+                            <Trash2 className="h-4 w-4" /> Hapus {expiredCount} Asset Expired
+                        </button>
+                    ) : (
+                        <p className="text-sm text-muted-foreground">Tidak ada asset expired</p>
+                    )}
+                </CardContent>
+            </Card>
+
+            {/* Delete Confirmation Dialog */}
+            <Dialog open={showDeleteDialog} onOpenChange={(open) => { if (!deletingExpired) setShowDeleteDialog(open) }}>
+                <DialogContent className="sm:max-w-md">
+                    {deleteResult ? (
+                        <>
+                            <DialogHeader>
+                                <DialogTitle className="flex items-center gap-2">
+                                    {deleteResult.success
+                                        ? <><CheckCircle2 className="h-5 w-5 text-green-500" /> Berhasil</>
+                                        : <><XCircle className="h-5 w-5 text-red-500" /> Gagal</>
+                                    }
+                                </DialogTitle>
+                                <DialogDescription>{deleteResult.message}</DialogDescription>
+                            </DialogHeader>
+                            <DialogFooter>
+                                <button
+                                    onClick={() => { setShowDeleteDialog(false); setDeleteResult(null) }}
+                                    className="px-4 py-2 rounded-lg bg-black text-white hover:bg-black/80 text-sm font-medium transition-colors"
+                                >
+                                    Tutup
+                                </button>
+                            </DialogFooter>
+                        </>
+                    ) : deletingExpired ? (
+                        <div className="flex flex-col items-center gap-4 py-8">
+                            <Loader2 className="h-10 w-10 animate-spin text-red-500" />
+                            <div className="text-center">
+                                <p className="font-medium">Menghapus asset expired...</p>
+                                <p className="text-sm text-muted-foreground mt-1">Menghapus asset,  Mohon tunggu.</p>
+                            </div>
+                        </div>
+                    ) : (
+                        <>
+                            <DialogHeader>
+                                <DialogTitle className="flex items-center gap-2">
+                                    <AlertTriangle className="h-5 w-5 text-orange-500" /> Konfirmasi Hapus
+                                </DialogTitle>
+                                <DialogDescription>
+                                    Hapus <span className="font-semibold text-foreground">{expiredCount}</span> asset yang sudah expired? Asset akan dihapus dari Cloudinary dan database. Aksi ini tidak bisa dibatalkan.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <DialogFooter className="gap-2 sm:gap-0">
+                                <button
+                                    onClick={() => setShowDeleteDialog(false)}
+                                    className="px-4 py-2 rounded-lg border border-black/10 hover:bg-black/5 text-sm font-medium transition-colors"
+                                >
+                                    Batal
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        setDeletingExpired(true)
+                                        const result = await deleteExpiredAssets()
+                                        if (result.success) {
+                                            setExpiredCount(0)
+                                            setDeleteResult({ success: true, message: `Berhasil menghapus ${result.deletedCount} asset expired.` })
+                                        } else {
+                                            setDeleteResult({ success: false, message: result.error || "Gagal menghapus asset expired." })
+                                        }
+                                        setDeletingExpired(false)
+                                    }}
+                                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 text-sm font-medium transition-colors"
+                                >
+                                    <Trash2 className="h-4 w-4" /> Hapus Semua
+                                </button>
+                            </DialogFooter>
+                        </>
+                    )}
+                </DialogContent>
+            </Dialog>
 
             {/* Recent Transactions */}
             <Card>

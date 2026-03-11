@@ -204,7 +204,11 @@ export async function checkVideoJobStatus(
                 } else if (operation === "imageToVideo") {
                     description = "Image to Video Generation"
                 } else if (operation === "upscaleVideo") {
-                    description = "Video Upscale"
+                    description = "Video Upscale 1080p"
+                } else if (operation === "upscaleVideo4K") {
+                    description = "Video Upscale 4K"
+                } else if (operation === "extendVideo") {
+                    description = "Video Extend"
                 }
                 const deductResult = userId
                     ? await deductCreditsByUserId(userId, operation, description)
@@ -617,10 +621,13 @@ export async function upscaleVideo(
             throw new Error("mediaGenerationId is required for upscaling")
         }
 
+        // Determine credit operation based on resolution
+        const creditOp: CreditOperationType = request.resolution === "4K" ? "upscaleVideo4K" : "upscaleVideo"
+
         // Check if user has sufficient credits
         const creditCheck = request.userId
-            ? await checkSufficientCreditsByUserId(request.userId, "upscaleVideo")
-            : await checkSufficientCredits("upscaleVideo")
+            ? await checkSufficientCreditsByUserId(request.userId, creditOp)
+            : await checkSufficientCredits(creditOp)
 
         if (!creditCheck.success) {
             return { success: false, error: creditCheck.error }
@@ -678,8 +685,8 @@ export async function upscaleVideo(
 
         // Deduct credits for successful sync upscale
         const deductResult = request.userId
-            ? await deductCreditsByUserId(request.userId, "upscaleVideo", "Video Upscale")
-            : await deductCredits("upscaleVideo", "Video Upscale")
+            ? await deductCreditsByUserId(request.userId, creditOp, request.resolution === "4K" ? "Video Upscale 4K" : "Video Upscale 1080p")
+            : await deductCredits(creditOp, request.resolution === "4K" ? "Video Upscale 4K" : "Video Upscale 1080p")
 
         return {
             success: true,
@@ -866,6 +873,114 @@ export async function generateFrameToFrameVideo(
         }
     } catch (error) {
         console.error("Frame-to-Frame video generation failed:", error)
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error occurred",
+        }
+    }
+}
+
+// Video extend interfaces
+interface ExtendVideoRequest {
+    mediaGenerationId: string
+    prompt: string
+    userId?: string
+}
+
+interface ExtendVideoResponse {
+    success: boolean
+    jobId?: string
+    videoUrl?: string
+    error?: string
+    remainingCredits?: number
+}
+
+/**
+ * Extend a video using the UseAPI extend endpoint
+ * Uses async mode and returns jobId for polling
+ */
+export async function extendVideo(
+    request: ExtendVideoRequest
+): Promise<ExtendVideoResponse> {
+    try {
+        if (!USEAPI_TOKEN) {
+            throw new Error("USEAPI_API_TOKEN is not configured")
+        }
+
+        if (!request.mediaGenerationId) {
+            throw new Error("mediaGenerationId is required for extending")
+        }
+
+        if (!request.prompt?.trim()) {
+            throw new Error("Prompt is required for extending video")
+        }
+
+        const creditCheck = request.userId
+            ? await checkSufficientCreditsByUserId(request.userId, "extendVideo")
+            : await checkSufficientCredits("extendVideo")
+
+        if (!creditCheck.success) {
+            return { success: false, error: creditCheck.error }
+        }
+        if (!creditCheck.hasCredits) {
+            return {
+                success: false,
+                error: `Kredit tidak cukup. Dibutuhkan: ${creditCheck.required}, Tersedia: ${creditCheck.available}`
+            }
+        }
+
+        const requestBody: Record<string, unknown> = {
+            mediaGenerationId: request.mediaGenerationId,
+            prompt: request.prompt.trim(),
+            async: true,
+        }
+
+        const response = await fetch(`${USEAPI_BASE_URL}/videos/extend`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${USEAPI_TOKEN}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(requestBody),
+        })
+
+        const data = await response.json()
+
+        if (!response.ok) {
+            console.error("UseAPI Video Extend Error:", data)
+            const errorMessage = typeof data.error === 'object'
+                ? data.error.message || JSON.stringify(data.error)
+                : data.error || `API Error: ${response.status}`
+            throw new Error(errorMessage)
+        }
+
+        const jobId = data.jobid || data.jobId
+
+        if (jobId) {
+            return {
+                success: true,
+                jobId,
+            }
+        }
+
+        const videoUrl = data.operations?.[0]?.operation?.metadata?.video?.fifeUrl
+            || data.operations?.[0]?.video?.fifeUrl
+
+        if (!videoUrl) {
+            throw new Error("No video URL in response")
+        }
+
+        const deductResult = request.userId
+            ? await deductCreditsByUserId(request.userId, "extendVideo", "Video Extend")
+            : await deductCredits("extendVideo", "Video Extend")
+
+        return {
+            success: true,
+            videoUrl,
+            remainingCredits: deductResult.remainingCredits,
+        }
+    } catch (error) {
+        console.error("Video extend failed:", error)
         return {
             success: false,
             error: error instanceof Error ? error.message : "Unknown error occurred",

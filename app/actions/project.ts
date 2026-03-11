@@ -3,7 +3,7 @@
 import { auth } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { revalidatePath } from "next/cache"
-import { uploadToCloudinary } from "@/lib/cloudinary"
+import { uploadToCloudinary, deleteFromCloudinary } from "@/lib/cloudinary"
 
 // ── Project CRUD ────────────────────────────────────────────────
 
@@ -78,7 +78,7 @@ export async function addProjectAsset(
   projectId: string,
   asset: {
     type: "image" | "video"
-    source: "uploaded" | "generated" | "upscaled"
+    source: "uploaded" | "generated" | "upscaled" | "extended"
     name: string
     url: string
     prompt?: string
@@ -124,14 +124,34 @@ export async function deleteProjectAsset(projectId: string, assetId: string) {
   const session = await auth()
   if (!session?.user?.id) return { success: false, error: "Unauthorized" }
 
-  // Verify ownership through join
-  await prisma.projectAsset.deleteMany({
+  // Find the asset first to get Cloudinary public_id
+  const asset = await prisma.projectAsset.findFirst({
     where: {
       id: assetId,
       projectId,
       project: { userId: session.user.id },
     },
   })
+
+  if (!asset) return { success: false, error: "Asset not found" }
+
+  // Delete from Cloudinary if hosted there
+  if (asset.url.includes("res.cloudinary.com")) {
+    try {
+      const parts = asset.url.split("/upload/")
+      if (parts[1]) {
+        // Remove version and extension: v1234567890/folder/file.ext -> folder/file
+        const pathAfterUpload = parts[1].replace(/^v\d+\//, "")
+        const publicId = pathAfterUpload.replace(/\.[^.]+$/, "")
+        const resourceType = asset.type === "video" ? "video" : "image"
+        await deleteFromCloudinary(publicId, resourceType)
+      }
+    } catch (e) {
+      console.error("Cloudinary delete failed:", e)
+    }
+  }
+
+  await prisma.projectAsset.delete({ where: { id: assetId } })
 
   revalidatePath(`/dashboard/projects/${projectId}`)
   return { success: true }

@@ -294,7 +294,7 @@ export async function generateImageToImage(
                     "Authorization": `Bearer ${USEAPI_TOKEN}`,
                     "Content-Type": contentType,
                 },
-                body: binaryData,
+                body: new Uint8Array(binaryData),
             })
 
             if (!uploadResponse.ok) {
